@@ -377,8 +377,9 @@ def test_catalogo_cubre_varios_rubros():
 
 def test_todos_los_patrones_compilan():
     import re
+    assert len(CATALOGO) >= 30, "el catálogo debe cubrir varios rubros"
     for nombre, patron in CATALOGO.items():
-        re.compile(patron)  # lanza si el patrón está mal escrito
+        assert re.compile(patron).pattern == patron, f"patrón inválido: {nombre}"
 ```
 
 - [ ] **Step 2: Correr la prueba y verificar que falla**
