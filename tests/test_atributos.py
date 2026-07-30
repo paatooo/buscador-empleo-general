@@ -73,5 +73,13 @@ def test_ingles_no_obligatorio_no_es_excluyente():
     assert ingles_excluyente("Ingles no obligatorio pero valorado") is False
 
 
+def test_ingles_no_es_obligatorio_no_es_excluyente():
+    assert ingles_excluyente("el ingles no es obligatorio para el cargo") is False
+
+
+def test_ingles_no_es_indispensable_no_es_excluyente():
+    assert ingles_excluyente("el ingles no es indispensable") is False
+
+
 def test_sin_mencion_de_ingles():
     assert ingles_excluyente("Se busca cajero") is False

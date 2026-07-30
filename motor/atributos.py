@@ -35,9 +35,8 @@ _REGIONES = {
 }
 
 _EXIGENCIA = r"excluyente|indispensable|requisito|obligatorio|fluido|avanzado"
-_SUAVIZA = (r"deseable|idealmente|no excluyente|plus\b|valorable"
-            r"|no es requisito|no obligatorio|no requerido|no indispensable"
-            r"|no es necesario")
+_SUAVIZA = (r"deseable|idealmente|plus\b|valorable"
+            r"|no (?:es )?(?:excluyente|obligatorio|indispensable|requisito|requerido|necesario)")
 
 _NUM_PALABRA = {
     "un": 1, "una": 1, "uno": 1, "dos": 2, "tres": 3, "cuatro": 4,
