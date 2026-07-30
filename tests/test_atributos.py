@@ -51,12 +51,26 @@ def test_anios_ausente_es_none():
     assert anios_experiencia("Buscamos vendedor proactivo") is None
 
 
+def test_anios_no_confunde_rango_de_edad_con_experiencia():
+    # "de 20 a 45 años" es un rango de edad, no de experiencia — no debe
+    # devolver un número inventado.
+    assert anios_experiencia("Se buscan personas de 20 a 45 anos, buena presencia") is None
+
+
 def test_ingles_excluyente_verdadero():
     assert ingles_excluyente("inglés avanzado excluyente") is True
 
 
 def test_ingles_deseable_no_es_excluyente():
     assert ingles_excluyente("inglés deseable, no excluyente") is False
+
+
+def test_ingles_no_es_requisito_no_es_excluyente():
+    assert ingles_excluyente("El ingles no es requisito para este cargo") is False
+
+
+def test_ingles_no_obligatorio_no_es_excluyente():
+    assert ingles_excluyente("Ingles no obligatorio pero valorado") is False
 
 
 def test_sin_mencion_de_ingles():

@@ -35,7 +35,9 @@ _REGIONES = {
 }
 
 _EXIGENCIA = r"excluyente|indispensable|requisito|obligatorio|fluido|avanzado"
-_SUAVIZA = r"deseable|idealmente|no excluyente|plus\b|valorable"
+_SUAVIZA = (r"deseable|idealmente|no excluyente|plus\b|valorable"
+            r"|no es requisito|no obligatorio|no requerido|no indispensable"
+            r"|no es necesario")
 
 _NUM_PALABRA = {
     "un": 1, "una": 1, "uno": 1, "dos": 2, "tres": 3, "cuatro": 4,
@@ -45,6 +47,13 @@ _NUM = r"(\d{1,2}|" + "|".join(_NUM_PALABRA) + r")"
 
 
 def region(ubicacion) -> str:
+    """Región de Chile a partir de un campo de ubicación (ciudad/comuna).
+
+    Espera un campo de ubicación acotado, no el cuerpo completo del aviso:
+    algunos nombres de comuna (p. ej. "Independencia", "Coronel") coinciden
+    con palabras comunes del español y producirían falsos positivos si se
+    buscaran sobre texto libre.
+    """
     texto = normalizar(ubicacion)
     for nombre, patron in _REGIONES.items():
         if re.search(patron, texto):
@@ -86,8 +95,8 @@ def anios_experiencia(texto) -> int | None:
     """
     normalizado = normalizar(texto)
     patrones = [
-        rf"de {_NUM} a {_NUM} anos",
-        rf"entre {_NUM} y {_NUM} anos",
+        rf"de {_NUM} a {_NUM} anos de experiencia",
+        rf"entre {_NUM} y {_NUM} anos de experiencia",
         rf"{_NUM}\+? anos? de experiencia",
         rf"minimo {_NUM} anos?",
         rf"al menos {_NUM} anos?",
