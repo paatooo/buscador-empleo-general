@@ -129,3 +129,36 @@ def test_sin_habilidades_puntua_al_menos_igual_que_con_habilidades_no_cubiertas(
     sin_skills = puntuar(aviso(habilidades=[]), perfil())
     con_skills_no_cubiertas = puntuar(aviso(habilidades=["Excel", "SAP"]), perfil(habilidades=[]))
     assert sin_skills.total >= con_skills_no_cubiertas.total
+
+
+def test_cargo_perfecto_nunca_pierde_contra_cargo_peor_por_habilidades():
+    # Reproduce el caso real que encontró la revisión final: un aviso con
+    # calce de cargo perfecto pero una habilidad de relleno no cubierta no
+    # debe perder contra un aviso con peor calce de cargo y cero habilidades.
+    perfecto_con_habilidad_no_cubierta = puntuar(
+        aviso(titulo="Operario de produccion turno noche",
+              habilidades=["Trabajo en equipo"]),
+        perfil(cargos_buscados=["operario de produccion turno noche"],
+               habilidades=[]))
+    peor_sin_habilidades = puntuar(
+        aviso(titulo="Operario de produccion turno", habilidades=[]),
+        perfil(cargos_buscados=["operario de produccion turno noche"],
+               habilidades=[]))
+    assert perfecto_con_habilidad_no_cubierta.total > peor_sin_habilidades.total
+
+
+def test_evitar_no_matchea_subcadena():
+    # "gas" no debe ocultar "Gasfiter" — son palabras distintas. Se fija el
+    # cargo buscado a "gasfiter" para aislar el comportamiento de "evitar"
+    # de la afinidad de cargo (que con el cargo por defecto "cajero" ya
+    # ocultaría el aviso por un motivo no relacionado con este test).
+    resultado = puntuar(aviso(titulo="Gasfiter con experiencia",
+                              texto="Se busca gasfiter"),
+                        perfil(cargos_buscados=["gasfiter"], evitar=["gas"]))
+    assert resultado.visible is True
+
+
+def test_evitar_sigue_ocultando_coincidencia_real():
+    resultado = puntuar(aviso(texto="Fábrica de envases plásticos"),
+                        perfil(evitar=["plástico"]))
+    assert resultado.visible is False

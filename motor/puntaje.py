@@ -3,13 +3,14 @@
 from dataclasses import dataclass, field
 
 from motor.cargo import UMBRAL_VISIBILIDAD, afinidad
-from motor.texto import normalizar
+from motor.texto import normalizar, tokens
 
-# El cargo pesa más que las habilidades. Cuando el aviso no menciona ninguna
-# habilidad, el cargo se lleva los 100 puntos: así un aviso de oficio no
-# queda estructuralmente por debajo de uno corporativo que sí las lista.
-_PESO_CARGO = 70
-_PESO_HABILIDADES = 30
+# Reemplaza _PESO_CARGO y _PESO_HABILIDADES por una sola constante de bono.
+# El cargo solo llega al máximo posible menos este margen; las habilidades
+# solo pueden sumar el margen restante, nunca restar del piso de cargo.
+# Así un calce de cargo perfecto nunca pierde frente a uno peor, sin
+# importar qué habilidades declare el perfil o liste el aviso.
+_BONO_HABILIDADES = 15
 
 _AJUSTE_INGLES = -20
 _AJUSTE_REGION = -25
@@ -70,13 +71,14 @@ def puntuar(aviso: Aviso, perfil: Perfil) -> Puntaje:
 
 
 def _base(afin: float, aviso: Aviso, perfil: Perfil) -> float:
-    """Cargo solo si el aviso no lista habilidades; cargo + habilidades si sí."""
-    if not aviso.habilidades:
-        return afin * (_PESO_CARGO + _PESO_HABILIDADES)
+    """El cargo solo ya alcanza casi el máximo; las habilidades solo suman."""
+    base_cargo = afin * (100 - _BONO_HABILIDADES)
     del_aviso = {normalizar(h) for h in aviso.habilidades}
+    if not del_aviso:
+        return base_cargo + _BONO_HABILIDADES
     del_perfil = {normalizar(h) for h in perfil.habilidades}
     cubiertas = len(del_aviso & del_perfil) / len(del_aviso)
-    return afin * _PESO_CARGO + cubiertas * _PESO_HABILIDADES
+    return base_cargo + cubiertas * _BONO_HABILIDADES
 
 
 def _ajustes(aviso: Aviso, perfil: Perfil) -> dict[str, int]:
@@ -109,6 +111,23 @@ def _queda_grande(aviso: Aviso, perfil: Perfil) -> bool:
 def _esta_evitado(aviso: Aviso, perfil: Perfil) -> bool:
     if not perfil.evitar:
         return False
-    texto = normalizar(f"{aviso.titulo} {aviso.texto}")
-    terminos = [n for n in (normalizar(t) for t in perfil.evitar) if n]
-    return any(n in texto for n in terminos)
+    del_aviso = set(tokens(f"{aviso.titulo} {aviso.texto}"))
+    singulares_aviso = {_sin_plural(t) for t in del_aviso}
+    for termino in perfil.evitar:
+        del_termino = tokens(termino)
+        if del_termino and all(
+            t in del_aviso or _sin_plural(t) in singulares_aviso
+            for t in del_termino
+        ):
+            return True
+    return False
+
+
+def _sin_plural(token: str) -> str:
+    """Plural simple del español ('plásticos' -> 'plastico'), sin tocar
+    palabras cortas donde la 's' final es parte de la palabra (p. ej. 'gas')."""
+    if token.endswith("es") and len(token) > 4:
+        return token[:-2]
+    if token.endswith("s") and len(token) > 3:
+        return token[:-1]
+    return token
