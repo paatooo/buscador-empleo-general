@@ -91,11 +91,41 @@ def test_evitar_de_una_persona_no_afecta_a_otra():
 
 def test_el_puntaje_nunca_sale_del_rango():
     resultado = puntuar(
-        aviso(ingles_excluyente=True, region="Antofagasta", anios_pedidos=15),
-        perfil(region="Metropolitana", anios_experiencia=0, acepta_remoto=False))
+        aviso(ingles_excluyente=True, region="Antofagasta", anios_pedidos=15,
+              titulo="Ayudante"),
+        perfil(cargos_buscados=["ayudante bodega"], region="Metropolitana",
+               anios_experiencia=0, acepta_remoto=False))
     assert 0 <= resultado.total <= 100
+    assert resultado.total == 0
 
 
 @pytest.mark.parametrize("titulo", ["Cajero", "CAJERA", "Cajero/a part time"])
 def test_variantes_del_mismo_cargo_son_visibles(titulo):
     assert puntuar(aviso(titulo=titulo), perfil()).visible is True
+
+
+def test_evitar_con_none_no_oculta_todo():
+    resultado = puntuar(aviso(), perfil(evitar=[None, "plástico"]))
+    assert resultado.visible is True
+
+
+def test_evitar_con_cero_no_oculta_todo():
+    resultado = puntuar(aviso(), perfil(evitar=[0]))
+    assert resultado.visible is True
+
+
+def test_habilidad_en_perfil_calza_sin_importar_mayusculas():
+    con = puntuar(aviso(habilidades=["Excel"]), perfil(habilidades=["excel"]))
+    sin = puntuar(aviso(habilidades=["Excel"]), perfil(habilidades=[]))
+    assert con.total > sin.total
+
+
+def test_ingles_en_perfil_sin_tilde_evita_la_penalizacion():
+    resultado = puntuar(aviso(ingles_excluyente=True), perfil(habilidades=["ingles"]))
+    assert "ingles_excluyente" not in resultado.ajustes
+
+
+def test_sin_habilidades_puntua_al_menos_igual_que_con_habilidades_no_cubiertas():
+    sin_skills = puntuar(aviso(habilidades=[]), perfil())
+    con_skills_no_cubiertas = puntuar(aviso(habilidades=["Excel", "SAP"]), perfil(habilidades=[]))
+    assert sin_skills.total >= con_skills_no_cubiertas.total

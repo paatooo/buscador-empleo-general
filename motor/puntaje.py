@@ -73,14 +73,16 @@ def _base(afin: float, aviso: Aviso, perfil: Perfil) -> float:
     """Cargo solo si el aviso no lista habilidades; cargo + habilidades si sí."""
     if not aviso.habilidades:
         return afin * (_PESO_CARGO + _PESO_HABILIDADES)
-    mias = set(perfil.habilidades) & set(aviso.habilidades)
-    cubiertas = len(mias) / len(aviso.habilidades)
+    del_aviso = {normalizar(h) for h in aviso.habilidades}
+    del_perfil = {normalizar(h) for h in perfil.habilidades}
+    cubiertas = len(del_aviso & del_perfil) / len(del_aviso)
     return afin * _PESO_CARGO + cubiertas * _PESO_HABILIDADES
 
 
 def _ajustes(aviso: Aviso, perfil: Perfil) -> dict[str, int]:
     ajustes = {}
-    if aviso.ingles_excluyente and "Inglés" not in perfil.habilidades:
+    habilidades_normalizadas = {normalizar(h) for h in perfil.habilidades}
+    if aviso.ingles_excluyente and normalizar("Inglés") not in habilidades_normalizadas:
         ajustes["ingles_excluyente"] = _AJUSTE_INGLES
     if _region_incompatible(aviso, perfil):
         ajustes["otra_region"] = _AJUSTE_REGION
@@ -108,4 +110,5 @@ def _esta_evitado(aviso: Aviso, perfil: Perfil) -> bool:
     if not perfil.evitar:
         return False
     texto = normalizar(f"{aviso.titulo} {aviso.texto}")
-    return any(normalizar(t) in texto for t in perfil.evitar if str(t).strip())
+    terminos = [n for n in (normalizar(t) for t in perfil.evitar) if n]
+    return any(n in texto for n in terminos)
