@@ -126,3 +126,41 @@ def ingles_excluyente(texto) -> bool:
         if re.search(_EXIGENCIA, ventana):
             return True
     return False
+
+
+def vigencia(date_posted, last_seen, hoy, ultima_corrida: str | None,
+            ventana: int = 30) -> dict:
+    """Estado estimado de una oferta y días de vigencia restante.
+
+    "probablemente_cerrada": la oferta no apareció en la última corrida
+    completa de recolección (su last_seen es anterior), lo que sugiere que
+    ya no está publicada aunque siga en la base."""
+    posted = _parse_fecha_iso(date_posted)
+    seen = _parse_fecha_iso(last_seen)
+    corrida = _parse_fecha_iso(ultima_corrida) if ultima_corrida else None
+    out = {"dias_publicada": None, "dias_restantes_est": None, "estado": "sin_fecha"}
+    if seen and corrida and seen < corrida:
+        out["estado"] = "probablemente_cerrada"
+        if posted:
+            out["dias_publicada"] = (hoy - posted).days
+        return out
+    if not posted:
+        return out
+    dias = (hoy - posted).days
+    restantes = max(0, ventana - dias)
+    out.update(
+        dias_publicada=dias,
+        dias_restantes_est=restantes,
+        estado="por_vencer" if restantes <= 7 else "activa",
+    )
+    return out
+
+
+def _parse_fecha_iso(s):
+    from datetime import date as _date
+    if not s:
+        return None
+    try:
+        return _date.fromisoformat(str(s)[:10])
+    except ValueError:
+        return None

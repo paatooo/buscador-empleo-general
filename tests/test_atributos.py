@@ -1,5 +1,5 @@
 from motor.atributos import (anios_experiencia, ingles_excluyente, modalidad,
-                             region, tipo_contrato)
+                             region, tipo_contrato, vigencia)
 
 
 def test_region_desde_ciudad():
@@ -91,3 +91,39 @@ def test_ingles_no_es_indispensable_no_es_excluyente():
 
 def test_sin_mencion_de_ingles():
     assert ingles_excluyente("Se busca cajero") is False
+
+
+def test_vigencia_activa_dentro_de_la_ventana():
+    from datetime import date
+    resultado = vigencia("2026-07-01", "2026-07-20", date(2026, 7, 20),
+                         "2026-07-20", ventana=30)
+    assert resultado["estado"] == "activa"
+    assert resultado["dias_publicada"] == 19
+
+
+def test_vigencia_por_vencer_cerca_del_limite():
+    from datetime import date
+    resultado = vigencia("2026-07-01", "2026-07-25", date(2026, 7, 25),
+                         "2026-07-25", ventana=30)
+    assert resultado["estado"] == "por_vencer"
+
+
+def test_vigencia_probablemente_cerrada_si_no_aparecio_en_la_ultima_corrida():
+    from datetime import date
+    # last_seen es anterior a la última corrida completa: no se vio hoy
+    resultado = vigencia("2026-07-01", "2026-07-10", date(2026, 7, 25),
+                         "2026-07-25", ventana=30)
+    assert resultado["estado"] == "probablemente_cerrada"
+
+
+def test_vigencia_sin_fecha_publicada():
+    from datetime import date
+    resultado = vigencia(None, "2026-07-25", date(2026, 7, 25), "2026-07-25")
+    assert resultado["estado"] == "sin_fecha"
+    assert resultado["dias_publicada"] is None
+
+
+def test_vigencia_sin_ultima_corrida_no_marca_cerrada():
+    from datetime import date
+    resultado = vigencia("2026-07-01", "2026-07-20", date(2026, 7, 20), None)
+    assert resultado["estado"] == "activa"
