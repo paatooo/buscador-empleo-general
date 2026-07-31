@@ -77,6 +77,24 @@ def test_run_calcula_vigencia_con_ultima_corrida_global(tmp_path):
     assert vigencia["estado"] in ("activa", "por_vencer")
 
 
+def test_run_no_marca_duplicadas_ofertas_en_regiones_distintas(tmp_path):
+    eng = db.engine(tmp_path / "a7.db")
+    _con_ofertas(eng, [
+        {"job_url": "http://x/1", "site": "computrabajo", "title": "Cajero/a",
+         "company": "Cadena Nacional", "location": "Iquique",
+         "description": "texto", "scrape_date": "2026-08-01"},
+        {"job_url": "http://x/2", "site": "computrabajo", "title": "Cajero/a",
+         "company": "Cadena Nacional", "location": "Punta Arenas",
+         "description": "texto", "scrape_date": "2026-08-01"},
+    ])
+    resumen = analizar.run(eng)
+    assert resumen["duplicadas"] == 0
+    for url in ("http://x/1", "http://x/2"):
+        assert db.consultar(
+            eng, f"SELECT duplicada FROM oferta_analisis WHERE job_url = '{url}'"
+        )[0][0] == 0
+
+
 def test_run_sin_ofertas_da_resumen_vacio(tmp_path):
     eng = db.engine(tmp_path / "a5.db")
     db.ensure_schema(eng)

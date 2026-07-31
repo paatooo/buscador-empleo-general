@@ -48,6 +48,7 @@ def run(eng, presupuesto_segundos: int = PRESUPUESTO_SEGUNDOS_DEFECTO,
     inicio = time.monotonic()
     terminos_corridos = 0
     ofertas_nuevas = 0
+    vigentes_totales = set()
     conocidas = {f["job_url"] for f in db.cargar_ofertas(eng)}
 
     for termino in terminos:
@@ -55,25 +56,34 @@ def run(eng, presupuesto_segundos: int = PRESUPUESTO_SEGUNDOS_DEFECTO,
             break
 
         total_termino = 0
-        for _nombre_fuente, modulo in FUENTES:
+        for nombre_fuente, modulo in FUENTES:
             try:
-                filas, _vigentes, _error = modulo.fetch_all(
+                filas, vigentes, error = modulo.fetch_all(
                     [termino], excluir_urls=conocidas)
-            except Exception:
-                filas = []
+            except Exception as e:
+                filas, vigentes, error = [], set(), str(e)[:300]
+            vigentes_totales |= vigentes
             if filas:
                 for f in filas:
                     f.setdefault("scrape_date", hoy)
                     f.setdefault("last_seen", hoy)
+                    f.setdefault("search_term", termino)
                 columnas = [c for c in COLUMNAS_OFERTA if c in filas[0]]
-                insertadas = db.upsert_ofertas(eng, filas, columnas)
+                try:
+                    insertadas = db.upsert_ofertas(eng, filas, columnas)
+                except Exception as e:
+                    print(f"[ERROR] guardando ofertas de {nombre_fuente} '{termino}': {e}")
+                    insertadas = 0
                 ofertas_nuevas += insertadas
-                total_termino += insertadas
+                total_termino += len(filas)
                 conocidas |= {f["job_url"] for f in filas}
+            if error:
+                print(f"[ERROR] {nombre_fuente} '{termino}': {error}")
 
         db.registrar_corrida_termino(eng, termino, total_termino, ahora_iso)
         terminos_corridos += 1
 
+    db.actualizar_last_seen(eng, vigentes_totales, hoy)
     resumen_analisis = analizar.run(eng)
 
     return {

@@ -7,7 +7,7 @@ excluyente, si es duplicada, y vigencia estimada. El puntaje contra un
 perfil se calcula al vuelo en una capa posterior (la app), con
 motor.puntaje.puntuar."""
 import json
-from datetime import date
+from datetime import datetime, timezone
 
 from motor.atributos import (anios_experiencia, ingles_excluyente, modalidad,
                              region, tipo_contrato, vigencia)
@@ -27,9 +27,9 @@ def run(eng, db_path=None) -> dict:
     if not filas_ofertas:
         return {"analizadas": 0, "duplicadas": 0}
 
-    hoy = date.today()
+    hoy = datetime.now(timezone.utc).date()
     ultima_corrida = max(
-        (f[8] for f in filas_ofertas if f[8]), default=hoy.isoformat())
+        (f[9] for f in filas_ofertas if f[9]), default=hoy.isoformat())
 
     # Deduplicación por contenido: misma oferta publicada varias veces
     # (distinto link o distinta fuente). Se conserva la primera capturada.
@@ -37,8 +37,8 @@ def run(eng, db_path=None) -> dict:
     vistas_clave = set()
     duplicada_por_url = {}
     for f in ordenadas:
-        job_url, _, title, company = f[0], f[1], f[2], f[3]
-        clave = f"{normalizar(title)}|{normalizar(company)}"
+        job_url, _, title, company, location = f[0], f[1], f[2], f[3], f[4]
+        clave = f"{normalizar(title)}|{normalizar(company)}|{region(location)}"
         duplicada_por_url[job_url] = clave in vistas_clave
         vistas_clave.add(clave)
 

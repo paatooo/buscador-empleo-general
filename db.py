@@ -293,6 +293,19 @@ def upsert_ofertas(eng: Engine, filas: list[dict], columnas: list[str]) -> int:
         return res.rowcount if res.rowcount is not None else 0
 
 
+def actualizar_last_seen(eng: Engine, urls, fecha: str) -> None:
+    """Refresca last_seen para URLs confirmadas vigentes hoy (aunque ya
+    existieran) — sin esto, una oferta que sigue publicada pero no es
+    nueva nunca actualiza su last_seen, y vigencia() la termina marcando
+    "probablemente_cerrada" aunque siga vigente."""
+    urls = list(urls)
+    if not urls:
+        return
+    with eng.begin() as con:
+        con.execute(text("UPDATE ofertas SET last_seen = :f WHERE job_url = :u"),
+                    [{"f": fecha, "u": u} for u in urls])
+
+
 def upsert_oferta_analisis(eng: Engine, filas: list[dict]) -> None:
     """Reemplaza el análisis genérico de cada oferta, en una única
     transacción: si algo falla a mitad de camino, todo se revierte y el

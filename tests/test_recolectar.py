@@ -118,3 +118,37 @@ def test_run_llama_al_analizador_al_final(tmp_path):
         resumen = recolectar.run(eng)
     m.assert_called_once()
     assert resumen["analizadas"] == 3
+
+
+def test_run_actualiza_last_seen_de_ofertas_que_siguen_vigentes(tmp_path):
+    eng = db.engine(tmp_path / "r7.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "usuario", "2026-08-01T00:00:00")
+
+    fila_dia1 = _fila_falsa("http://gb/1", "cajero")
+    fila_dia1["date_posted"] = "2026-08-01"
+
+    # Corrida 1: la oferta se inserta por primera vez.
+    with patch("fuente_getonbrd.fetch_all",
+               return_value=([fila_dia1], {"http://gb/1"}, None)), \
+         patch("fuente_computrabajo.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_trabajando.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_laborum.fetch_all", return_value=([], set(), None)):
+        recolectar.run(eng)
+
+    # Corrida 2, varios días después: la misma oferta sigue en el sitio
+    # (viene en `vigentes`) pero no es nueva (no vuelve en `filas`).
+    with patch("fuente_getonbrd.fetch_all",
+               return_value=([], {"http://gb/1"}, None)), \
+         patch("fuente_computrabajo.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_trabajando.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_laborum.fetch_all", return_value=([], set(), None)):
+        recolectar.run(eng)
+
+    last_seen = db.consultar(eng, "SELECT last_seen FROM ofertas"
+                                  " WHERE job_url = 'http://gb/1'")[0][0]
+    # last_seen debe haberse refrescado en la segunda corrida, no seguir
+    # clavado en la fecha de la primera inserción.
+    hoy = __import__("datetime").datetime.now(
+        __import__("datetime").timezone.utc).date().isoformat()
+    assert last_seen == hoy
