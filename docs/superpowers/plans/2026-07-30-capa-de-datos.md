@@ -134,7 +134,16 @@ def test_url_postgres_normaliza_prefijo_postgres(monkeypatch):
     monkeypatch.setenv("POSTGRES_URL", "postgres://u:pass@host/db")
     monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
     url = conexion.url_postgres()
-    assert url.startswith("postgresql://")
+    assert url.startswith("postgresql+psycopg://")
+
+
+def test_url_postgres_usa_el_driver_psycopg(monkeypatch):
+    # Sin esto, SQLAlchemy intenta psycopg2 (no instalado — este proyecto
+    # usa psycopg v3), y la conexión a la nube falla en el primer intento.
+    monkeypatch.setenv("POSTGRES_URL", "postgresql://u:pass@host:5432/db")
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    url = conexion.url_postgres()
+    assert url.startswith("postgresql+psycopg://")
 
 
 def test_diagnostico_sin_secrets_explica_que_falta(monkeypatch, tmp_path):
@@ -212,6 +221,12 @@ def url_postgres() -> str | None:
         return None  # quedó el marcador sin reemplazar
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
+    if url.startswith("postgresql://"):
+        # SQLAlchemy usa psycopg2 por defecto para el esquema "postgresql://"
+        # a secas, pero este proyecto solo instala psycopg v3 (psycopg[binary]
+        # en requirements.txt). Sin este driver explícito, create_engine()
+        # revienta con ModuleNotFoundError apenas se intenta conectar.
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
 
 
@@ -1085,12 +1100,27 @@ Esperado: FAIL con `AttributeError: module 'db' has no attribute 'upsert_ofertas
 Agregar a `db.py`:
 
 ```python
+# Columnas legítimas de `ofertas` (deben calzar con el CREATE TABLE de
+# _ensure_schema_real). upsert_ofertas() valida `columnas` contra esta
+# lista antes de interpolarla en SQL, siguiendo el mismo patrón que
+# CAMPOS_MARCA usa en upsert_marca — sin este whitelist, un nombre de
+# columna con comillas rompe la sentencia.
+CAMPOS_OFERTA = (
+    "job_url", "site", "search_term", "title", "company", "location",
+    "date_posted", "job_type", "is_remote", "min_amount", "max_amount",
+    "currency", "interval", "description", "scrape_date", "last_seen",
+)
+
+
 def upsert_ofertas(eng: Engine, filas: list[dict], columnas: list[str]) -> int:
     """Inserta ofertas nuevas ignorando las que ya existan (mismo
     job_url), de forma atómica. Devuelve cuántas filas quedaron realmente
     insertadas."""
     if not filas:
         return 0
+    invalidas = set(columnas) - set(CAMPOS_OFERTA)
+    if invalidas:
+        raise ValueError(f"columnas inválidas: {sorted(invalidas)}")
     cols = ", ".join(f'"{c}"' for c in columnas)
     vals = ", ".join(f":{c}" for c in columnas)
     with eng.begin() as con:
@@ -1135,6 +1165,7 @@ def cargar_ofertas(eng: Engine) -> list[dict]:
     aunque esté vacía)."""
     filas = consultar(eng, """
         SELECT o.job_url, o.title, o.company, o.site, o.scrape_date,
+               o.description,
                a.habilidades, a.areas, a.region, a.modalidad,
                a.tipo_contrato, a.anios_experiencia_pedidos,
                a.ingles_excluyente, a.duplicada, a.vigencia_estimada
@@ -1142,11 +1173,20 @@ def cargar_ofertas(eng: Engine) -> list[dict]:
         LEFT JOIN oferta_analisis a ON a.job_url = o.job_url
     """)
     columnas = ["job_url", "title", "company", "site", "scrape_date",
+                "description",
                 "habilidades", "areas", "region", "modalidad",
                 "tipo_contrato", "anios_experiencia_pedidos",
                 "ingles_excluyente", "duplicada", "vigencia_estimada"]
     return [dict(zip(columnas, fila)) for fila in filas]
 ```
+
+> Nota (revisión final de rama): `description` se agregó al SELECT y a
+> `columnas` porque una capa posterior (`motor.puntaje.Aviso.texto`,
+> `motor.habilidades.detectar`, `motor.atributos.*`) necesita el texto
+> completo del aviso, no solo el título. `CAMPOS_OFERTA` se agregó porque
+> `upsert_ofertas` no tenía whitelist de columnas pese a interpolarlas en
+> SQL — a diferencia de `upsert_marca`, que sí valida contra
+> `CAMPOS_MARCA`.
 
 - [ ] **Step 4: Correr las pruebas y verificar que pasan**
 
