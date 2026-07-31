@@ -125,3 +125,27 @@ def _ensure_schema_real(eng: Engine) -> None:
                   " anios_experiencia_pedidos INTEGER,"
                   " ingles_excluyente INTEGER, duplicada INTEGER,"
                   " vigencia_estimada TEXT, analizado_en TEXT)")
+
+
+def upsert_usuario(eng: Engine, usuario_id: str, perfil_json: str,
+                   creado_en: str) -> None:
+    """Crea o actualiza el perfil de un usuario. `creado_en` solo se fija
+    la primera vez — actualizar el perfil no debe cambiar la fecha de
+    alta.
+
+    A diferencia de `upsert_marca` (Task 4), esta sentencia es idéntica en
+    SQLite y Postgres — no hace falta ramificar por `es_nube`."""
+    ejecutar(eng,
+        "INSERT INTO usuarios (id, perfil_json, creado_en)"
+        " VALUES (:id, :p, :c)"
+        " ON CONFLICT (id) DO UPDATE SET perfil_json = :p",
+        {"id": usuario_id, "p": perfil_json, "c": creado_en})
+
+
+def cargar_usuario(eng: Engine, usuario_id: str) -> dict | None:
+    filas = consultar(eng, "SELECT id, perfil_json, creado_en FROM usuarios"
+                           " WHERE id = :id", {"id": usuario_id})
+    if not filas:
+        return None
+    id_, perfil_json, creado_en = filas[0]
+    return {"id": id_, "perfil_json": perfil_json, "creado_en": creado_en}
