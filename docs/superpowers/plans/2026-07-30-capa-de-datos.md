@@ -573,20 +573,15 @@ def upsert_usuario(eng: Engine, usuario_id: str, perfil_json: str,
                    creado_en: str) -> None:
     """Crea o actualiza el perfil de un usuario. `creado_en` solo se fija
     la primera vez — actualizar el perfil no debe cambiar la fecha de
-    alta."""
-    with eng.begin() as con:
-        if es_nube(eng):
-            con.execute(text(
-                "INSERT INTO usuarios (id, perfil_json, creado_en)"
-                " VALUES (:id, :p, :c)"
-                " ON CONFLICT (id) DO UPDATE SET perfil_json = :p"),
-                {"id": usuario_id, "p": perfil_json, "c": creado_en})
-        else:
-            con.execute(text(
-                "INSERT INTO usuarios (id, perfil_json, creado_en)"
-                " VALUES (:id, :p, :c)"
-                " ON CONFLICT (id) DO UPDATE SET perfil_json = :p"),
-                {"id": usuario_id, "p": perfil_json, "c": creado_en})
+    alta.
+
+    A diferencia de `upsert_marca` (Task 4), esta sentencia es idéntica en
+    SQLite y Postgres — no hace falta ramificar por `es_nube`."""
+    ejecutar(eng,
+        "INSERT INTO usuarios (id, perfil_json, creado_en)"
+        " VALUES (:id, :p, :c)"
+        " ON CONFLICT (id) DO UPDATE SET perfil_json = :p",
+        {"id": usuario_id, "p": perfil_json, "c": creado_en})
 
 
 def cargar_usuario(eng: Engine, usuario_id: str) -> dict | None:
@@ -597,10 +592,6 @@ def cargar_usuario(eng: Engine, usuario_id: str) -> dict | None:
     id_, perfil_json, creado_en = filas[0]
     return {"id": id_, "perfil_json": perfil_json, "creado_en": creado_en}
 ```
-
-Nota: SQLite y Postgres soportan el mismo `ON CONFLICT ... DO UPDATE SET`
-para esta sentencia (a diferencia de `upsert_marca` en la Task 4, que sí
-necesita ramas separadas — ver esa tarea para el porqué).
 
 - [ ] **Step 4: Correr las pruebas y verificar que pasan**
 
