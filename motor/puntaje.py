@@ -145,14 +145,14 @@ def _raices_posibles(token: str) -> set[str]:
     En vez de decidir qué regla de pluralización aplica (ambiguo sin
     contexto morfológico), se generan las dos raíces candidatas — quitar
     una "s" (envases -> envase) o quitar "es" (gases -> gas) — y se
-    acepta calce con cualquiera. El riesgo de colisión entre palabras
-    distintas por esta vía es bajísimo (raíces de 2+ caracteres de
-    diferencia rara vez coinciden), y es preferible a fallar en no
-    reconocer el plural correcto.
+    acepta calce con cualquiera. Solo se recorta si la palabra termina en
+    "s": sin ese resguardo, pares sin relación como "carne"/"carnet" o
+    "mesa"/"meses" también calzan por quitar la última letra.
     """
     raices = {token}
-    if len(token) > 3:
-        raices.add(token[:-1])
-    if token.endswith("es") and len(token) > 4:
-        raices.add(token[:-2])
+    if token.endswith("s"):
+        if len(token) > 3:
+            raices.add(token[:-1])
+        if token.endswith("es") and len(token) > 4:
+            raices.add(token[:-2])
     return raices

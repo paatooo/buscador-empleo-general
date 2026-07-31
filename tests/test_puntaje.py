@@ -192,6 +192,16 @@ def test_evitar_no_colisiona_palabras_distintas_por_pluralizacion():
     assert resultado.visible is True
 
 
+def test_evitar_no_colisiona_por_recorte_sin_terminar_en_s():
+    # Regresión: una versión previa de la raíz candidata recortaba la
+    # última letra de CUALQUIER palabra, no solo las terminadas en "s",
+    # así que "carne" (evitar) calzaba contra "carnet" en el aviso.
+    resultado = puntuar(
+        aviso(texto="Se requiere carnet de conducir clase B"),
+        perfil(evitar=["carne"]))
+    assert resultado.visible is True
+
+
 def test_evitar_multipalabra_no_matchea_palabras_dispersas():
     resultado = puntuar(
         aviso(texto="Vendemos planes; el area de seguros de cesantia"),
