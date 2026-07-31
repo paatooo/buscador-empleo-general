@@ -1469,6 +1469,28 @@ def test_run_calcula_vigencia_con_ultima_corrida_global(tmp_path):
     assert vigencia["estado"] in ("activa", "por_vencer")
 
 
+def test_run_no_marca_duplicadas_ofertas_en_regiones_distintas(tmp_path):
+    # Agregado en la revisión final de rama (Finding 3): el mismo título +
+    # empresa en dos regiones distintas son ofertas reales y separadas
+    # (cadena nacional publicando el mismo cargo en varias ciudades) — no
+    # deben marcarse como duplicadas entre sí.
+    eng = db.engine(tmp_path / "a7.db")
+    _con_ofertas(eng, [
+        {"job_url": "http://x/1", "site": "computrabajo", "title": "Cajero/a",
+         "company": "Cadena Nacional", "location": "Iquique",
+         "description": "texto", "scrape_date": "2026-08-01"},
+        {"job_url": "http://x/2", "site": "computrabajo", "title": "Cajero/a",
+         "company": "Cadena Nacional", "location": "Punta Arenas",
+         "description": "texto", "scrape_date": "2026-08-01"},
+    ])
+    resumen = analizar.run(eng)
+    assert resumen["duplicadas"] == 0
+    for url in ("http://x/1", "http://x/2"):
+        assert db.consultar(
+            eng, f"SELECT duplicada FROM oferta_analisis WHERE job_url = '{url}'"
+        )[0][0] == 0
+
+
 def test_run_sin_ofertas_da_resumen_vacio(tmp_path):
     eng = db.engine(tmp_path / "a5.db")
     db.ensure_schema(eng)
@@ -1510,7 +1532,7 @@ excluyente, si es duplicada, y vigencia estimada. El puntaje contra un
 perfil se calcula al vuelo en una capa posterior (la app), con
 motor.puntaje.puntuar."""
 import json
-from datetime import date
+from datetime import datetime, timezone
 
 from motor.atributos import (anios_experiencia, ingles_excluyente, modalidad,
                              region, tipo_contrato, vigencia)
@@ -1530,18 +1552,38 @@ def run(eng, db_path=None) -> dict:
     if not filas_ofertas:
         return {"analizadas": 0, "duplicadas": 0}
 
-    hoy = date.today()
+    # UTC, no date.today() (hora local): recolectar.py también estampa en
+    # UTC. Con Chile en UTC-4, comparar una fecha local contra fechas
+    # guardadas en UTC podía dejar `hoy` un día antes de lo que la corrida
+    # ya escribió (Finding 6 de la revisión final de rama).
+    hoy = datetime.now(timezone.utc).date()
+    # `last_seen` (índice 9), no `scrape_date` (índice 8): scrape_date solo
+    # marca cuándo se capturó la fila POR PRIMERA VEZ y no avanza en
+    # corridas posteriores que no traen nada nuevo para esa oferta —
+    # last_seen sí, porque recolectar.py lo refresca vía
+    # `db.actualizar_last_seen` para toda URL confirmada vigente en la
+    # corrida. Usar scrape_date acá congelaba `ultima_corrida` en el
+    # pasado y hacía que ofertas todavía activas se marcaran
+    # "probablemente_cerrada" (Finding 1 de la revisión final de rama).
     ultima_corrida = max(
-        (f[8] for f in filas_ofertas if f[8]), default=hoy.isoformat())
+        (f[9] for f in filas_ofertas if f[9]), default=hoy.isoformat())
 
     # Deduplicación por contenido: misma oferta publicada varias veces
-    # (distinto link o distinta fuente). Se conserva la primera capturada.
+    # (distinto link o distinta fuente). Se conserva la primera capturada
+    # — por eso este `sorted` sigue ordenando por scrape_date (primera
+    # captura), no por last_seen: es una semántica distinta de
+    # `ultima_corrida` arriba y no debe tocarse.
     ordenadas = sorted(filas_ofertas, key=lambda f: (f[8] or "", f[0]))
     vistas_clave = set()
     duplicada_por_url = {}
     for f in ordenadas:
-        job_url, _, title, company = f[0], f[1], f[2], f[3]
-        clave = f"{normalizar(title)}|{normalizar(company)}"
+        job_url, _, title, company, location = f[0], f[1], f[2], f[3], f[4]
+        # Se incluye region(location) en la clave (Finding 3 de la revisión
+        # final de rama): sin esto, una cadena nacional publicando el mismo
+        # cargo genérico ("Cajero/a") en varias ciudades quedaba con solo
+        # una oferta visible por región, cuando son avisos reales y
+        # distintos.
+        clave = f"{normalizar(title)}|{normalizar(company)}|{region(location)}"
         duplicada_por_url[job_url] = clave in vistas_clave
         vistas_clave.add(clave)
 
@@ -1589,7 +1631,9 @@ if __name__ == "__main__":
 .venv\Scripts\python.exe -m pytest tests/test_analizar.py -v
 ```
 
-Esperado: 6 passed
+Esperado: 7 passed (incluye `test_run_no_marca_duplicadas_ofertas_en_regiones_distintas`,
+agregada en la revisión final de rama junto con el resto de este código de
+ejemplo ya corregido — ver "Pendiente de calibración" al final del plan)
 
 - [ ] **Step 5: Commit**
 
@@ -1745,6 +1789,49 @@ def test_run_llama_al_analizador_al_final(tmp_path):
         resumen = recolectar.run(eng)
     m.assert_called_once()
     assert resumen["analizadas"] == 3
+
+
+def test_run_actualiza_last_seen_de_ofertas_que_siguen_vigentes(tmp_path):
+    # Agregado en la revisión final de rama (Finding 1): cada
+    # `fuente_*.fetch_all` devuelve un `vigentes: set[str]` con las URLs
+    # confirmadas presentes hoy (de un sitemap fresco o del resultado vivo
+    # de la API), específicamente para que el orquestador pueda refrescar
+    # last_seen sin tener que re-visitar cada página de detalle. Si esta
+    # prueba simulando dos corridas no pasara, `analizar.py` terminaría
+    # marcando "probablemente_cerrada" a ofertas que en realidad siguen
+    # publicadas — bug que solo aparece al simular MÚLTIPLES corridas en
+    # el tiempo, no en una corrida aislada.
+    eng = db.engine(tmp_path / "r7.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "usuario", "2026-08-01T00:00:00")
+
+    fila_dia1 = _fila_falsa("http://gb/1", "cajero")
+    fila_dia1["date_posted"] = "2026-08-01"
+
+    # Corrida 1: la oferta se inserta por primera vez.
+    with patch("fuente_getonbrd.fetch_all",
+               return_value=([fila_dia1], {"http://gb/1"}, None)), \
+         patch("fuente_computrabajo.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_trabajando.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_laborum.fetch_all", return_value=([], set(), None)):
+        recolectar.run(eng)
+
+    # Corrida 2, varios días después: la misma oferta sigue en el sitio
+    # (viene en `vigentes`) pero no es nueva (no vuelve en `filas`).
+    with patch("fuente_getonbrd.fetch_all",
+               return_value=([], {"http://gb/1"}, None)), \
+         patch("fuente_computrabajo.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_trabajando.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_laborum.fetch_all", return_value=([], set(), None)):
+        recolectar.run(eng)
+
+    last_seen = db.consultar(eng, "SELECT last_seen FROM ofertas"
+                                  " WHERE job_url = 'http://gb/1'")[0][0]
+    # last_seen debe haberse refrescado en la segunda corrida, no seguir
+    # clavado en la fecha de la primera inserción.
+    hoy = __import__("datetime").datetime.now(
+        __import__("datetime").timezone.utc).date().isoformat()
+    assert last_seen == hoy
 ```
 
 - [ ] **Step 2: Correr la prueba y verificar que falla**
@@ -1804,6 +1891,10 @@ def run(eng, presupuesto_segundos: int = PRESUPUESTO_SEGUNDOS_DEFECTO,
     inicio = time.monotonic()
     terminos_corridos = 0
     ofertas_nuevas = 0
+    # Acumula `vigentes` de TODAS las fuentes/términos de la corrida, para
+    # refrescar last_seen al final (ver Finding 1 más abajo) — no se
+    # descarta como en el diseño original.
+    vigentes_totales = set()
     conocidas = {f["job_url"] for f in db.cargar_ofertas(eng)}
 
     for termino in terminos:
@@ -1811,7 +1902,7 @@ def run(eng, presupuesto_segundos: int = PRESUPUESTO_SEGUNDOS_DEFECTO,
             break
 
         total_termino = 0
-        for _nombre_fuente, modulo in FUENTES:
+        for nombre_fuente, modulo in FUENTES:
             # `modulo.fetch_all` se resuelve recién acá, no al construir
             # FUENTES: si se guardara la función ya resuelta en la tupla,
             # unittest.mock.patch("fuente_x.fetch_all", ...) en las
@@ -1819,22 +1910,45 @@ def run(eng, presupuesto_segundos: int = PRESUPUESTO_SEGUNDOS_DEFECTO,
             # el módulo, pero una referencia capturada al importar ya
             # apunta a la función vieja. Late binding real de Python.
             try:
-                filas, _vigentes, _error = modulo.fetch_all([termino], excluir_urls=conocidas)
-            except Exception:
-                filas = []
+                filas, vigentes, error = modulo.fetch_all(
+                    [termino], excluir_urls=conocidas)
+            except Exception as e:
+                filas, vigentes, error = [], set(), str(e)[:300]
+            vigentes_totales |= vigentes
             if filas:
                 for f in filas:
                     f.setdefault("scrape_date", hoy)
                     f.setdefault("last_seen", hoy)
+                    f.setdefault("search_term", termino)
                 columnas = [c for c in COLUMNAS_OFERTA if c in filas[0]]
-                insertadas = db.upsert_ofertas(eng, filas, columnas)
+                try:
+                    insertadas = db.upsert_ofertas(eng, filas, columnas)
+                except Exception as e:
+                    print(f"[ERROR] guardando ofertas de {nombre_fuente} '{termino}': {e}")
+                    insertadas = 0
                 ofertas_nuevas += insertadas
-                total_termino += insertadas
+                # `len(filas)`, no `insertadas`: `ofertas_ultimas` en
+                # terminos_busqueda debe reflejar cuánto trajo la fuente
+                # para este término (para que `terminos_pendientes`
+                # despriorice correctamente los términos estériles), no
+                # cuánto era nuevo — una fuente que sigue devolviendo las
+                # mismas 20 ofertas de siempre no es un término estéril.
+                total_termino += len(filas)
                 conocidas |= {f["job_url"] for f in filas}
+            if error:
+                print(f"[ERROR] {nombre_fuente} '{termino}': {error}")
 
         db.registrar_corrida_termino(eng, termino, total_termino, ahora_iso)
         terminos_corridos += 1
 
+    # Refresca last_seen de toda URL confirmada vigente en esta corrida,
+    # aunque no sea nueva. Sin este paso, una oferta que sigue publicada
+    # pero deja de ser "nueva" después de su primera corrida nunca vuelve
+    # a actualizar su last_seen, y analizar.py termina marcándola
+    # "probablemente_cerrada" aunque siga vigente — bug que solo aparece
+    # al simular varias corridas en el tiempo (Finding 1 de la revisión
+    # final de rama; ver "Pendiente de calibración").
+    db.actualizar_last_seen(eng, vigentes_totales, hoy)
     resumen_analisis = analizar.run(eng)
 
     return {
@@ -1858,7 +1972,10 @@ if __name__ == "__main__":
 .venv\Scripts\python.exe -m pytest tests/test_recolectar.py -v
 ```
 
-Esperado: 6 passed
+Esperado: 7 passed (incluye
+`test_run_actualiza_last_seen_de_ofertas_que_siguen_vigentes`, agregada en
+la revisión final de rama junto con el resto de este código de ejemplo ya
+corregido — ver "Pendiente de calibración" al final del plan)
 
 - [ ] **Step 5: Correr la suite completa del proyecto**
 
@@ -1866,8 +1983,8 @@ Esperado: 6 passed
 .venv\Scripts\python.exe -m pytest tests -v
 ```
 
-Esperado: 163 passed (151 al cierre de la Task 5 + 6 de analizar + 6 de
-recolectar)
+Esperado: 165 passed (151 al cierre de la Task 5 + 7 de analizar + 7 de
+recolectar, con el código ya corregido según la revisión final de rama)
 
 - [ ] **Step 6: Agregar `requests` a las dependencias**
 
@@ -1915,6 +2032,51 @@ eso sigue siendo trabajo de una capa posterior (la app), con
    referencia), y la app en Streamlit Cloud.
 
 ## Pendiente de calibración
+
+- **Findings de la revisión final de rama (whole-branch review), ya
+  corregidos.** Después de que las siete tasks de este plan pasaran
+  revisión individual, una revisión final simulando MÚLTIPLES corridas en
+  el tiempo (algo que ninguna revisión de una task aislada puede ver)
+  encontró bugs que ya están arreglados en el código y reflejados en el
+  código de ejemplo de las Tasks 6 y 7 de arriba:
+  - **Finding 1 (crítico):** `db.upsert_ofertas` usa
+    `ON CONFLICT (job_url) DO NOTHING`, así que `last_seen` solo se fijaba
+    en el insert inicial y nunca se refrescaba después. Cada
+    `fuente_*.fetch_all` ya devolvía un `vigentes: set[str]` pensado
+    exactamente para esto, pero `recolectar.py` lo descartaba
+    (`filas, _vigentes, _error = ...`). Resultado: una oferta que seguía
+    genuinamente publicada terminaba con `estado: "probablemente_cerrada"`
+    en `oferta_analisis` después de su primera corrida. Arreglado con
+    `db.actualizar_last_seen` (nueva función) + acumular `vigentes` en
+    `recolectar.run` + usar `last_seen` (no `scrape_date`) para calcular
+    `ultima_corrida` en `analizar.py`.
+  - **Finding 2:** `ofertas_ultimas` en `terminos_busqueda` se registraba
+    con `insertadas` (solo lo nuevo) en vez de `len(filas)` (todo lo que
+    trajo la fuente), lo que despriorizaba términos que en realidad seguían
+    siendo productivos.
+  - **Finding 3 (importante):** la clave de deduplicación en `analizar.py`
+    era solo `título|empresa`, sin región — una cadena nacional publicando
+    el mismo cargo genérico en varias ciudades perdía ofertas reales y
+    distintas por duplicado falso. Arreglado agregando `region(location)`
+    a la clave.
+  - **Finding 4:** los errores de cada fuente (`error` del tercer valor de
+    `fetch_all`) se descartaban en silencio; ahora se imprimen, y
+    `db.upsert_ofertas` está envuelto en try/except para no abortar la
+    corrida completa si falla el guardado de una fuente.
+  - **Finding 5:** las filas guardadas no fijaban `search_term` si la
+    fuente no lo incluía; ahora `recolectar.run` hace
+    `f.setdefault("search_term", termino)`.
+  - **Finding 6 (menor):** `recolectar.py` estampaba fechas en UTC pero
+    `analizar.py` usaba `date.today()` (hora local) — en Chile (UTC-4) una
+    corrida tardía en el día podía dejar `hoy` un día antes de lo que
+    `recolectar.py` ya había escrito. Arreglado usando
+    `datetime.now(timezone.utc).date()` en `analizar.py` también.
+
+  Si en algún momento se re-deriva `recolectar.py`, `analizar.py` o
+  `db.py` desde cero a partir de este plan, usar el código de ejemplo de
+  arriba (ya corregido) y no la primera versión que pasó la revisión de
+  cada task por separado — esa primera versión es la que tenía estos
+  bugs, invisibles hasta que se simulan varias corridas seguidas.
 
 - `PRESUPUESTO_SEGUNDOS_DEFECTO = 45 * 60` en `recolectar.py` sale
   directo del spec, no de datos reales de cuánto tarda cada fuente. Ajustar
