@@ -1782,10 +1782,10 @@ import fuente_trabajando
 PRESUPUESTO_SEGUNDOS_DEFECTO = 45 * 60
 
 FUENTES = (
-    ("getonbrd", fuente_getonbrd.fetch_all),
-    ("computrabajo", fuente_computrabajo.fetch_all),
-    ("trabajando", fuente_trabajando.fetch_all),
-    ("laborum", fuente_laborum.fetch_all),
+    ("getonbrd", fuente_getonbrd),
+    ("computrabajo", fuente_computrabajo),
+    ("trabajando", fuente_trabajando),
+    ("laborum", fuente_laborum),
 )
 
 COLUMNAS_OFERTA = ("job_url", "site", "search_term", "title", "company",
@@ -1811,9 +1811,15 @@ def run(eng, presupuesto_segundos: int = PRESUPUESTO_SEGUNDOS_DEFECTO,
             break
 
         total_termino = 0
-        for _nombre_fuente, fetch_all in FUENTES:
+        for _nombre_fuente, modulo in FUENTES:
+            # `modulo.fetch_all` se resuelve recién acá, no al construir
+            # FUENTES: si se guardara la función ya resuelta en la tupla,
+            # unittest.mock.patch("fuente_x.fetch_all", ...) en las
+            # pruebas no tendría efecto — patch reemplaza el atributo en
+            # el módulo, pero una referencia capturada al importar ya
+            # apunta a la función vieja. Late binding real de Python.
             try:
-                filas, _vigentes, _error = fetch_all([termino], excluir_urls=conocidas)
+                filas, _vigentes, _error = modulo.fetch_all([termino], excluir_urls=conocidas)
             except Exception:
                 filas = []
             if filas:
