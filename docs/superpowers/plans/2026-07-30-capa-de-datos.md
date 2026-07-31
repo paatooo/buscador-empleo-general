@@ -930,10 +930,12 @@ def terminos_pendientes(eng: Engine, limite: int | None = None,
     estériles (`ofertas_ultimas == 0`), y entre iguales, del más antiguo
     al más reciente. Excluye lo corrido en las últimas
     `_HORAS_MIN_ENTRE_CORRIDAS` horas."""
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
+    # datetime.utcnow() está deprecado desde 3.12; esto da el mismo
+    # datetime naive en UTC (mismo isoformat) sin la advertencia.
     ahora_dt = (datetime.fromisoformat(ahora) if ahora
-                else datetime.utcnow())
+                else datetime.now(timezone.utc).replace(tzinfo=None))
     corte = (ahora_dt - timedelta(hours=_HORAS_MIN_ENTRE_CORRIDAS)).isoformat()
 
     filas = consultar(eng,
