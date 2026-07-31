@@ -3,6 +3,7 @@
 Se prueba contra SQLite temporal; el SQL usado es portable."""
 from sqlalchemy import inspect
 
+import conexion
 import db
 
 
@@ -256,8 +257,9 @@ def test_cargar_ofertas_hace_join_con_analisis(tmp_path):
     eng = db.engine(tmp_path / "o4.db")
     db.ensure_schema(eng)
     db.ejecutar(eng, "INSERT INTO ofertas (job_url, title, company, site,"
-                     " scrape_date) VALUES ('http://x/1', 'Cajero', 'A',"
-                     " 'trabajando', '2026-07-30')")
+                     " scrape_date, description) VALUES ('http://x/1',"
+                     " 'Cajero', 'A', 'trabajando', '2026-07-30',"
+                     " 'Se busca cajero con experiencia')")
     db.upsert_oferta_analisis(eng, [{
         "job_url": "http://x/1", "habilidades": '[]', "areas": '[]',
         "region": "Metropolitana", "modalidad": "Presencial",
@@ -269,9 +271,35 @@ def test_cargar_ofertas_hace_join_con_analisis(tmp_path):
     assert ofertas[0]["job_url"] == "http://x/1"
     assert ofertas[0]["title"] == "Cajero"
     assert ofertas[0]["region"] == "Metropolitana"
+    assert ofertas[0]["description"] == "Se busca cajero con experiencia"
 
 
 def test_cargar_ofertas_sin_filas_da_lista_vacia(tmp_path):
     eng = db.engine(tmp_path / "o5.db")
     db.ensure_schema(eng)
     assert db.cargar_ofertas(eng) == []
+
+
+def test_upsert_ofertas_rechaza_columna_invalida(tmp_path):
+    eng = db.engine(tmp_path / "o6.db")
+    db.ensure_schema(eng)
+    try:
+        db.upsert_ofertas(eng, [{"job_url": "x", "borrar; DROP TABLE ofertas": "y"}],
+                          ["job_url", "borrar; DROP TABLE ofertas"])
+        assert False, "debió rechazar la columna inválida"
+    except ValueError:
+        pass
+
+
+def test_engine_nube_usa_el_dialecto_psycopg(monkeypatch):
+    url = "postgresql://u:pass@host:5432/db_dialecto_test"
+    monkeypatch.setenv("POSTGRES_URL", url)
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    # La clave de caché es ("nube", url_ya_normalizada); usamos una URL
+    # exclusiva de este test para no pisar/reusar un Engine creado por otra
+    # prueba en este mismo proceso.
+    clave = ("nube", conexion.url_postgres())
+    db._ENGINES.pop(clave, None)
+    eng = db.engine()
+    assert db.es_nube(eng) is True
+    assert eng.url.drivername == "postgresql+psycopg"

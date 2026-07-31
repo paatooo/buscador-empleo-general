@@ -25,6 +25,18 @@ DB_PATH = BASE / "data" / "buscador.db"
 
 CAMPOS_MARCA = ("revisada", "favorita", "postulada")
 
+# Columnas legítimas de `ofertas` (deben calzar con el CREATE TABLE de
+# _ensure_schema_real). upsert_ofertas() valida `columnas` contra esta
+# lista antes de interpolarla en SQL — sin este whitelist, un nombre de
+# columna con comillas rompe la sentencia; la próxima capa (Recolección,
+# aún no construida) alimentará esta función con columnas derivadas de la
+# salida del scraper, así que la validación se necesita ahora.
+CAMPOS_OFERTA = (
+    "job_url", "site", "search_term", "title", "company", "location",
+    "date_posted", "job_type", "is_remote", "min_amount", "max_amount",
+    "currency", "interval", "description", "scrape_date", "last_seen",
+)
+
 # Un término corrido hace menos de esto no vuelve a proponerse: evita
 # volver a scrapear lo que ya se buscó recién. PROVISIONAL: calibrar
 # contra la duración real de una corrida completa cuando exista el
@@ -268,6 +280,9 @@ def upsert_ofertas(eng: Engine, filas: list[dict], columnas: list[str]) -> int:
     insertadas."""
     if not filas:
         return 0
+    invalidas = set(columnas) - set(CAMPOS_OFERTA)
+    if invalidas:
+        raise ValueError(f"columnas inválidas: {sorted(invalidas)}")
     cols = ", ".join(f'"{c}"' for c in columnas)
     vals = ", ".join(f":{c}" for c in columnas)
     with eng.begin() as con:
@@ -312,6 +327,7 @@ def cargar_ofertas(eng: Engine) -> list[dict]:
     aunque esté vacía)."""
     filas = consultar(eng, """
         SELECT o.job_url, o.title, o.company, o.site, o.scrape_date,
+               o.description,
                a.habilidades, a.areas, a.region, a.modalidad,
                a.tipo_contrato, a.anios_experiencia_pedidos,
                a.ingles_excluyente, a.duplicada, a.vigencia_estimada
@@ -319,6 +335,7 @@ def cargar_ofertas(eng: Engine) -> list[dict]:
         LEFT JOIN oferta_analisis a ON a.job_url = o.job_url
     """)
     columnas = ["job_url", "title", "company", "site", "scrape_date",
+                "description",
                 "habilidades", "areas", "region", "modalidad",
                 "tipo_contrato", "anios_experiencia_pedidos",
                 "ingles_excluyente", "duplicada", "vigencia_estimada"]

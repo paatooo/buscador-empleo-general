@@ -46,6 +46,12 @@ def url_postgres() -> str | None:
         return None  # quedó el marcador sin reemplazar
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
+    if url.startswith("postgresql://"):
+        # SQLAlchemy usa psycopg2 por defecto para el esquema "postgresql://"
+        # a secas, pero este proyecto solo instala psycopg v3 (psycopg[binary]
+        # en requirements.txt). Sin este driver explícito, create_engine()
+        # revienta con ModuleNotFoundError apenas se intenta conectar.
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
 
 
