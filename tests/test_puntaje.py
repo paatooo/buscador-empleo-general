@@ -162,3 +162,45 @@ def test_evitar_sigue_ocultando_coincidencia_real():
     resultado = puntuar(aviso(texto="Fábrica de envases plásticos"),
                         perfil(evitar=["plástico"]))
     assert resultado.visible is False
+
+
+def test_cargo_exacto_nunca_pierde_contra_variante_de_genero_por_habilidades():
+    # Caso encontrado en revisión: con bono fijo, "cajera" (afinidad 0.83,
+    # sin habilidades) le ganaba a "cajero" (afinidad 1.0, con una
+    # habilidad de relleno no cubierta). El bono proporcional lo cierra.
+    exacto_con_habilidad_no_cubierta = puntuar(
+        aviso(titulo="Cajero", habilidades=["Trabajo en equipo"]),
+        perfil(cargos_buscados=["cajero"], habilidades=[]))
+    variante_genero_sin_habilidades = puntuar(
+        aviso(titulo="Cajera", habilidades=[]),
+        perfil(cargos_buscados=["cajero"], habilidades=[]))
+    assert exacto_con_habilidad_no_cubierta.total > variante_genero_sin_habilidades.total
+
+
+def test_evitar_reconoce_plural_de_palabra_terminada_en_vocal():
+    resultado = puntuar(
+        aviso(texto="Fabrica de envases de plastico"),
+        perfil(evitar=["envase"]))
+    assert resultado.visible is False
+
+
+def test_evitar_no_colisiona_palabras_distintas_por_pluralizacion():
+    # 'mesas' y 'meses' no deben confundirse entre sí.
+    resultado = puntuar(
+        aviso(texto="Trabajo de temporada, contrato por 3 meses"),
+        perfil(evitar=["mesas"]))
+    assert resultado.visible is True
+
+
+def test_evitar_multipalabra_no_matchea_palabras_dispersas():
+    resultado = puntuar(
+        aviso(texto="Vendemos planes; el area de seguros de cesantia"),
+        perfil(evitar=["venta de seguros"]))
+    assert resultado.visible is True
+
+
+def test_evitar_multipalabra_matchea_frase_contigua():
+    resultado = puntuar(
+        aviso(texto="Se ofrece venta de seguros de vida"),
+        perfil(evitar=["venta de seguros"]))
+    assert resultado.visible is False

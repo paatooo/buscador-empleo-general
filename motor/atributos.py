@@ -93,12 +93,16 @@ def anios_experiencia(texto) -> int | None:
     Nunca inventa un valor — la omisión no debe penalizar a nadie.
     """
     normalizado = normalizar(texto)
+    # No hace falta un patrón anclado a "mínimo"/"al menos": ese texto
+    # siempre viene acompañado en algún punto de "N años de experiencia",
+    # y el patrón general de abajo ya lo cubre sin exigir la palabra
+    # "mínimo" explícitamente. Un patrón anclado a esas palabras sería
+    # estrictamente más específico (nunca calzaría un caso que el
+    # general no calce ya) y por eso quedaría muerto en la lista.
     patrones = [
         rf"de {_NUM} a {_NUM} anos de experiencia",
         rf"entre {_NUM} y {_NUM} anos de experiencia",
         rf"{_NUM}\+? anos? de experiencia",
-        rf"minimo {_NUM} anos? de experiencia",
-        rf"al menos {_NUM} anos? de experiencia",
         rf"experiencia (?:minima )?de {_NUM} anos?",
     ]
     for patron in patrones:

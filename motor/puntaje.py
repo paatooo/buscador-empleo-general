@@ -5,11 +5,10 @@ from dataclasses import dataclass, field
 from motor.cargo import UMBRAL_VISIBILIDAD, afinidad
 from motor.texto import normalizar, tokens
 
-# Reemplaza _PESO_CARGO y _PESO_HABILIDADES por una sola constante de bono.
-# El cargo solo llega al máximo posible menos este margen; las habilidades
-# solo pueden sumar el margen restante, nunca restar del piso de cargo.
-# Así un calce de cargo perfecto nunca pierde frente a uno peor, sin
-# importar qué habilidades declare el perfil o liste el aviso.
+# Cuánto puede mover el puntaje la cobertura de habilidades. El bono se
+# escala por la afinidad de cargo en _base() (no se suma plano), para que
+# un calce de cargo perfecto nunca pierda frente a uno peor sin importar
+# qué habilidades declare el perfil o liste el aviso.
 _BONO_HABILIDADES = 15
 
 _AJUSTE_INGLES = -20
@@ -71,14 +70,22 @@ def puntuar(aviso: Aviso, perfil: Perfil) -> Puntaje:
 
 
 def _base(afin: float, aviso: Aviso, perfil: Perfil) -> float:
-    """El cargo solo ya alcanza casi el máximo; las habilidades solo suman."""
-    base_cargo = afin * (100 - _BONO_HABILIDADES)
+    """El cargo domina y el bono de habilidades escala con la afinidad.
+
+    El bono nunca es un monto fijo: si fuera fijo, un aviso de afinidad
+    baja sin habilidades listadas podría superar a uno de afinidad alta
+    con una habilidad no cubierta (bono fijo pesa más cuanto menor es la
+    afinidad). Al escalar el bono con `afin`, el piso de un calce
+    perfecto (afin=1.0) siempre domina sobre cualquier calce peor con el
+    mismo o peor resultado de habilidades.
+    """
     del_aviso = {normalizar(h) for h in aviso.habilidades}
     if not del_aviso:
-        return base_cargo + _BONO_HABILIDADES
-    del_perfil = {normalizar(h) for h in perfil.habilidades}
-    cubiertas = len(del_aviso & del_perfil) / len(del_aviso)
-    return base_cargo + cubiertas * _BONO_HABILIDADES
+        bono_fraccion = 1.0
+    else:
+        del_perfil = {normalizar(h) for h in perfil.habilidades}
+        bono_fraccion = len(del_aviso & del_perfil) / len(del_aviso)
+    return afin * (100 - _BONO_HABILIDADES * (1 - bono_fraccion))
 
 
 def _ajustes(aviso: Aviso, perfil: Perfil) -> dict[str, int]:
@@ -111,23 +118,41 @@ def _queda_grande(aviso: Aviso, perfil: Perfil) -> bool:
 def _esta_evitado(aviso: Aviso, perfil: Perfil) -> bool:
     if not perfil.evitar:
         return False
-    del_aviso = set(tokens(f"{aviso.titulo} {aviso.texto}"))
-    singulares_aviso = {_sin_plural(t) for t in del_aviso}
+    del_aviso = tokens(f"{aviso.titulo} {aviso.texto}")
     for termino in perfil.evitar:
         del_termino = tokens(termino)
-        if del_termino and all(
-            t in del_aviso or _sin_plural(t) in singulares_aviso
-            for t in del_termino
-        ):
+        if del_termino and _contiene_secuencia(del_aviso, del_termino):
             return True
     return False
 
 
-def _sin_plural(token: str) -> str:
-    """Plural simple del español ('plásticos' -> 'plastico'), sin tocar
-    palabras cortas donde la 's' final es parte de la palabra (p. ej. 'gas')."""
+def _contiene_secuencia(tokens_aviso: list[str], tokens_termino: list[str]) -> bool:
+    """True si tokens_termino aparece como subsecuencia contigua en
+    tokens_aviso, permitiendo que cada palabra calce por raíz (singular
+    o plural)."""
+    n = len(tokens_termino)
+    for i in range(len(tokens_aviso) - n + 1):
+        ventana = tokens_aviso[i:i + n]
+        if all(_raices_posibles(a) & _raices_posibles(t)
+               for a, t in zip(ventana, tokens_termino)):
+            return True
+    return False
+
+
+def _raices_posibles(token: str) -> set[str]:
+    """Formas singulares candidatas de una palabra en español.
+
+    En vez de decidir qué regla de pluralización aplica (ambiguo sin
+    contexto morfológico), se generan las dos raíces candidatas — quitar
+    una "s" (envases -> envase) o quitar "es" (gases -> gas) — y se
+    acepta calce con cualquiera. El riesgo de colisión entre palabras
+    distintas por esta vía es bajísimo (raíces de 2+ caracteres de
+    diferencia rara vez coinciden), y es preferible a fallar en no
+    reconocer el plural correcto.
+    """
+    raices = {token}
+    if len(token) > 3:
+        raices.add(token[:-1])
     if token.endswith("es") and len(token) > 4:
-        return token[:-2]
-    if token.endswith("s") and len(token) > 3:
-        return token[:-1]
-    return token
+        raices.add(token[:-2])
+    return raices
