@@ -1045,3 +1045,21 @@ combinación de perfil y aviso.
 - El catálogo de habilidades cubre varios rubros pero es un punto de
   partida. Crece cuando se vea qué piden los avisos que efectivamente se
   recolectan.
+- `_BONO_HABILIDADES` en `motor/puntaje.py` está en 15, elegido para que un
+  calce de cargo perfecto nunca pierda contra una variante cercana (p. ej.
+  "cajero" vs "cajera", afinidad 0.83) por culpa de una habilidad de
+  relleno no cubierta. Queda un residuo aceptado conscientemente: variantes
+  aún más cercanas del mismo cargo (p. ej. un plural como "cajeros",
+  afinidad 0.92) todavía pueden ganarle a un calce perfecto sin
+  habilidades cubiertas. Cerrarlo del todo requeriría un bono tan chico
+  que las habilidades dejarían de diferenciar nada — no vale la pena hasta
+  tener datos reales de cuánto importa esto en la práctica.
+- `_esta_evitado` en `motor/puntaje.py` exige que las palabras de un
+  término a evitar aparezcan contiguas en los tokens del aviso (título +
+  texto concatenados, con conectores como "de" descartados). Esto es a
+  propósito más angosto que una coincidencia de subcadena, pero como
+  contigüidad se mide sobre tokens y no sobre oraciones, un término de
+  varias palabras puede fallar en calzar si cruza un punto seguido, o
+  calzar por casualidad cuando la última palabra del título queda pegada
+  a la primera del cuerpo. Baja frecuencia esperada; revisar si aparece en
+  la práctica.
