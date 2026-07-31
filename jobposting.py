@@ -39,6 +39,8 @@ def ubicacion(d: dict) -> str:
     loc = d.get("jobLocation") or {}
     if isinstance(loc, list):
         loc = loc[0] if loc else {}
+    if not isinstance(loc, dict):
+        return str(loc) or "Chile"
     dir_ = loc.get("address") or {}
     if not isinstance(dir_, dict):
         return str(dir_) or "Chile"

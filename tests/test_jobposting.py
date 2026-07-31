@@ -63,6 +63,13 @@ def test_ubicacion_sin_direccion_da_chile():
     assert jobposting.ubicacion({}) == "Chile"
 
 
+def test_ubicacion_con_joblocation_no_dict_no_crashea():
+    # HTML mal formado real: jobLocation como texto suelto en vez de un
+    # objeto Place — no debe lanzar AttributeError.
+    assert jobposting.ubicacion({"jobLocation": "Remote"}) == "Remote"
+    assert jobposting.ubicacion({"jobLocation": ["Remote"]}) == "Remote"
+
+
 def test_a_fila_arma_la_fila_completa():
     d = jobposting.extraer(HTML_CON_JOBPOSTING)
     fila = jobposting.a_fila(d, "http://x/1", "trabajando")
