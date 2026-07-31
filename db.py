@@ -94,8 +94,7 @@ def ensure_schema(eng: Engine) -> None:
     with _ESQUEMA_LOCK:
         if eng in _ESQUEMA_LISTO:
             return
-    _ensure_schema_real(eng)
-    with _ESQUEMA_LOCK:
+        _ensure_schema_real(eng)
         _ESQUEMA_LISTO.add(eng)
 
 
