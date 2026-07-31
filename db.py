@@ -149,3 +149,50 @@ def cargar_usuario(eng: Engine, usuario_id: str) -> dict | None:
         return None
     id_, perfil_json, creado_en = filas[0]
     return {"id": id_, "perfil_json": perfil_json, "creado_en": creado_en}
+
+
+def upsert_marca(eng: Engine, usuario_id: str, job_url: str, campo: str,
+                 valor: bool, fecha: str) -> None:
+    """Crea o actualiza una marca de un usuario sobre una oferta. Atómico y
+    seguro con escritores concurrentes (INSERT ... ON CONFLICT en vez de
+    UPDATE-luego-INSERT, que puede chocar si dos procesos marcan la misma
+    oferta al mismo tiempo)."""
+    if campo not in CAMPOS_MARCA:
+        raise ValueError(f"campo inválido: {campo}")
+    with eng.begin() as con:
+        if es_nube(eng):
+            con.execute(text(
+                "INSERT INTO marcas (usuario_id, job_url, revisada,"
+                " favorita, postulada, fecha) VALUES (:u, :j, 0, 0, 0, :f)"
+                " ON CONFLICT (usuario_id, job_url)"
+                f' DO UPDATE SET "{campo}" = :v, fecha = :f'),
+                {"u": usuario_id, "j": job_url, "v": int(valor), "f": fecha})
+            # ON CONFLICT sólo pisa el campo pedido en la fila EXISTENTE; en
+            # una fila recién creada por este mismo INSERT, además hay que
+            # fijarlo (el INSERT deja 0 en todos los campos por defecto).
+            con.execute(
+                text(f'UPDATE marcas SET "{campo}" = :v'
+                     " WHERE usuario_id = :u AND job_url = :j"
+                     f' AND "{campo}" != :v'),
+                {"u": usuario_id, "j": job_url, "v": int(valor)})
+        else:
+            con.execute(text(
+                "INSERT INTO marcas (usuario_id, job_url, revisada,"
+                " favorita, postulada, fecha) VALUES (:u, :j, 0, 0, 0, :f)"
+                " ON CONFLICT (usuario_id, job_url) DO NOTHING"),
+                {"u": usuario_id, "j": job_url, "f": fecha})
+            con.execute(
+                text(f'UPDATE marcas SET "{campo}" = :v, fecha = :f'
+                     " WHERE usuario_id = :u AND job_url = :j"),
+                {"v": int(valor), "f": fecha, "u": usuario_id, "j": job_url})
+
+
+def cargar_marcas(eng: Engine, usuario_id: str) -> dict:
+    filas = consultar(eng,
+        "SELECT job_url, revisada, favorita, postulada, fecha FROM marcas"
+        " WHERE usuario_id = :u", {"u": usuario_id})
+    return {
+        job_url: {"revisada": revisada, "favorita": favorita,
+                  "postulada": postulada, "fecha": fecha}
+        for job_url, revisada, favorita, postulada, fecha in filas
+    }

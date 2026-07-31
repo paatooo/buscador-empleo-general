@@ -69,3 +69,63 @@ def test_cargar_usuario_inexistente_da_none(tmp_path):
     eng = db.engine(tmp_path / "u2.db")
     db.ensure_schema(eng)
     assert db.cargar_usuario(eng, "no-existe@x.cl") is None
+
+
+def test_upsert_marca_crea_y_actualiza(tmp_path):
+    eng = db.engine(tmp_path / "m.db")
+    db.ensure_schema(eng)
+    db.upsert_marca(eng, "ana@x.cl", "http://x/1", "favorita", True,
+                    "2026-07-30")
+    marcas = db.cargar_marcas(eng, "ana@x.cl")
+    assert marcas["http://x/1"]["favorita"] == 1
+
+    db.upsert_marca(eng, "ana@x.cl", "http://x/1", "postulada", True,
+                    "2026-07-30")
+    marcas = db.cargar_marcas(eng, "ana@x.cl")
+    assert marcas["http://x/1"]["favorita"] == 1    # no pisa la marca anterior
+    assert marcas["http://x/1"]["postulada"] == 1
+
+    db.upsert_marca(eng, "ana@x.cl", "http://x/1", "favorita", False,
+                    "2026-07-31")
+    marcas = db.cargar_marcas(eng, "ana@x.cl")
+    assert marcas["http://x/1"]["favorita"] == 0
+    assert db.escalar(eng, "SELECT COUNT(*) FROM marcas") == 1  # sin duplicar
+
+
+def test_upsert_marca_rechaza_campo_invalido(tmp_path):
+    eng = db.engine(tmp_path / "m2.db")
+    db.ensure_schema(eng)
+    try:
+        db.upsert_marca(eng, "ana@x.cl", "http://x/1",
+                        "borrar; DROP TABLE marcas", True, "x")
+        assert False, "debió rechazar el campo"
+    except ValueError:
+        pass
+
+
+def test_marcas_de_un_usuario_no_se_filtran_a_otro(tmp_path):
+    # Requisito explícito del spec: privacidad entre usuarios.
+    eng = db.engine(tmp_path / "m3.db")
+    db.ensure_schema(eng)
+    db.upsert_marca(eng, "ana@x.cl", "http://x/1", "favorita", True,
+                    "2026-07-30")
+    db.upsert_marca(eng, "beto@x.cl", "http://x/2", "postulada", True,
+                    "2026-07-30")
+
+    marcas_ana = db.cargar_marcas(eng, "ana@x.cl")
+    marcas_beto = db.cargar_marcas(eng, "beto@x.cl")
+
+    assert list(marcas_ana) == ["http://x/1"]
+    assert list(marcas_beto) == ["http://x/2"]
+
+
+def test_dos_usuarios_pueden_marcar_la_misma_oferta_distinto(tmp_path):
+    eng = db.engine(tmp_path / "m4.db")
+    db.ensure_schema(eng)
+    db.upsert_marca(eng, "ana@x.cl", "http://x/1", "favorita", True,
+                    "2026-07-30")
+    db.upsert_marca(eng, "beto@x.cl", "http://x/1", "favorita", False,
+                    "2026-07-30")
+
+    assert db.cargar_marcas(eng, "ana@x.cl")["http://x/1"]["favorita"] == 1
+    assert db.cargar_marcas(eng, "beto@x.cl")["http://x/1"]["favorita"] == 0
