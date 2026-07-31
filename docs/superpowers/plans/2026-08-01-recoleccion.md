@@ -1187,7 +1187,6 @@ def test_clasifica_salud_y_educacion():
 
 
 def test_sin_calce_da_otra_sin_clasificar():
-    assert clasifica := clasificar("Puesto sin ninguna palabra clave reconocible")
     assert clasificar("xyz sin ninguna coincidencia") == ["Otra/Sin clasificar"]
 
 
