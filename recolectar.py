@@ -62,7 +62,9 @@ def run(eng, presupuesto_segundos: int = PRESUPUESTO_SEGUNDOS_DEFECTO,
                     [termino], excluir_urls=conocidas)
             except Exception as e:
                 filas, vigentes, error = [], set(), str(e)[:300]
+            vigentes = vigentes or set()
             vigentes_totales |= vigentes
+            total_termino += len(vigentes)
             if filas:
                 for f in filas:
                     f.setdefault("scrape_date", hoy)
@@ -75,7 +77,6 @@ def run(eng, presupuesto_segundos: int = PRESUPUESTO_SEGUNDOS_DEFECTO,
                     print(f"[ERROR] guardando ofertas de {nombre_fuente} '{termino}': {e}")
                     insertadas = 0
                 ofertas_nuevas += insertadas
-                total_termino += len(filas)
                 conocidas |= {f["job_url"] for f in filas}
             if error:
                 print(f"[ERROR] {nombre_fuente} '{termino}': {error}")
