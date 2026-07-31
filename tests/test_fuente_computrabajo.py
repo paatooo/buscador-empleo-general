@@ -86,3 +86,35 @@ def test_fetch_all_captura_error_de_listado_sin_interrumpir():
         filas, _, error = fuente_computrabajo.fetch_all(["falla", "cajero"])
     assert error is not None
     assert len(filas) >= 1  # el segundo término sí funcionó
+
+
+def test_parse_listado_no_cuelga_con_html_sin_cierre():
+    # Regresión: HTML mal formado (bot-block, respuesta cortada) sin
+    # </article> en ningún lado no debe colgar el parser.
+    import time
+    from fuente_computrabajo import _parse_listado
+    from datetime import date
+
+    html_malformado = '<article class="box_offer_x_' + ('a' * 500) * 400
+    inicio = time.monotonic()
+    resultado = _parse_listado(html_malformado, date(2026, 8, 1))
+    duracion = time.monotonic() - inicio
+    assert duracion < 5.0  # antes del fix, esto tardaba >13s con ~80KB
+
+
+def test_slug_convierte_espacios_a_guiones():
+    from fuente_computrabajo import _slug
+    assert _slug("asistente contable") == "asistente-contable"
+
+
+def test_slug_neutraliza_caracteres_de_ruta():
+    from fuente_computrabajo import _slug
+    assert ".." not in _slug("trabajo-de-../../etc/passwd")
+    assert "/" not in _slug("cajero/a")
+    assert "#" not in _slug("vendedor#nota")
+    assert "?" not in _slug("vendedor?x=1")
+
+
+def test_slug_termino_ya_valido_no_se_mangla():
+    from fuente_computrabajo import _slug
+    assert _slug("soldador") == "soldador"

@@ -23,7 +23,13 @@ MAX_DETALLES_POR_CORRIDA = 100
 
 
 def _slug(termino: str) -> str:
-    return re.sub(r"\s+", "-", termino.strip().lower())
+    """Convierte un término de búsqueda a slug de URL. Cualquier
+    secuencia de caracteres que no sea letra/dígito/guion bajo se
+    colapsa a un solo guion — así ningún carácter especial (/, .., #, ?)
+    puede llegar intacto a la URL. "cajero/a" -> "cajero-a";
+    "a..b" -> "a-b" (nunca sobrevive ".." literal)."""
+    limpio = re.sub(r"[^\w]+", "-", (termino or "").strip().lower())
+    return limpio.strip("-")
 
 
 def _limpia(html: str) -> str:
@@ -47,16 +53,30 @@ def _fecha_relativa(texto: str, hoy: date) -> str | None:
     return None
 
 
+_MAX_BLOQUE = 20_000  # cota dura: ningún listado real de Computrabajo se
+                        # acerca a este tamaño por oferta; evita que un
+                        # regex tenga que escanear HTML mal formado o
+                        # truncado sin límite (backtracking catastrófico
+                        # verificado: una página de ~80KB sin </article>
+                        # tardaba ~14s; con esta cota, tiempo acotado).
+
+
 def _parse_listado(html: str, hoy: date) -> list[dict]:
     ofertas = []
-    for art in re.findall(r"<article[^>]*box_offer.*?</article>", html, re.S):
-        link = re.search(r'href="(/ofertas-de-trabajo/[^"#]+)', art)
-        titulo = re.search(r'js-o-link[^>]*>\s*([^<]{3,120})', art)
+    posiciones = [m.start() for m in re.finditer(r"<article\b", html)]
+    posiciones.append(len(html))
+    for i in range(len(posiciones) - 1):
+        fin = min(posiciones[i + 1], posiciones[i] + _MAX_BLOQUE)
+        bloque = html[posiciones[i]:fin]
+        if "box_offer" not in bloque:
+            continue
+        link = re.search(r'href="(/ofertas-de-trabajo/[^"#]+)', bloque)
+        titulo = re.search(r'js-o-link[^>]*>\s*([^<]{3,120})', bloque)
         if not (link and titulo):
             continue
-        empresa = re.search(r'<p class="dFlex[^"]*"[^>]*>(.*?)</p>', art, re.S)
-        lugar = re.search(r'<span class="mr10">\s*([^<]{3,80})', art)
-        fecha = re.search(r'<p class="fs13[^"]*"[^>]*>\s*([^<]{3,40})<', art)
+        empresa = re.search(r'<p class="dFlex[^"]*"[^>]*>(.*?)</p>', bloque, re.S)
+        lugar = re.search(r'<span class="mr10">\s*([^<]{3,80})', bloque)
+        fecha = re.search(r'<p class="fs13[^"]*"[^>]*>\s*([^<]{3,40})<', bloque)
         ofertas.append({
             "job_url": BASE + link.group(1).strip(),
             "title": _limpia(titulo.group(1)),
