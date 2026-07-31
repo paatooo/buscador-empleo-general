@@ -25,6 +25,12 @@ DB_PATH = BASE / "data" / "buscador.db"
 
 CAMPOS_MARCA = ("revisada", "favorita", "postulada")
 
+# Un término corrido hace menos de esto no vuelve a proponerse: evita
+# volver a scrapear lo que ya se buscó recién. PROVISIONAL: calibrar
+# contra la duración real de una corrida completa cuando exista el
+# pipeline de recolección.
+_HORAS_MIN_ENTRE_CORRIDAS = 24
+
 # Cachea el Engine por proceso: crear uno nuevo en cada llamada abre una
 # conexión TCP+TLS desde cero cada vez. SQLAlchemy está pensado para crear
 # el Engine una sola vez: su pool interno ya es seguro entre
@@ -196,3 +202,57 @@ def cargar_marcas(eng: Engine, usuario_id: str) -> dict:
                   "postulada": postulada, "fecha": fecha}
         for job_url, revisada, favorita, postulada, fecha in filas
     }
+
+
+def agregar_termino(eng: Engine, termino: str, origen: str,
+                    agregado_en: str) -> None:
+    """No hace nada si el término ya existe — no se pisa su origen ni su
+    fecha de alta por un segundo aporte del mismo término."""
+    with eng.begin() as con:
+        con.execute(text(
+            "INSERT INTO terminos_busqueda (termino, origen, agregado_en)"
+            " VALUES (:t, :o, :a)"
+            " ON CONFLICT (termino) DO NOTHING"),
+            {"t": termino, "o": origen, "a": agregado_en})
+
+
+def registrar_corrida_termino(eng: Engine, termino: str,
+                              ofertas_encontradas: int, fecha: str) -> None:
+    ejecutar(eng,
+        "UPDATE terminos_busqueda SET ultima_corrida = :f,"
+        " ofertas_ultimas = :n WHERE termino = :t",
+        {"f": fecha, "n": ofertas_encontradas, "t": termino})
+
+
+def terminos_pendientes(eng: Engine, limite: int | None = None,
+                        ahora: str | None = None) -> list[str]:
+    """Orden de prioridad: términos de usuario nunca corridos primero,
+    luego términos base nunca corridos, luego el resto — dentro de ese
+    resto, los que sí devolvieron ofertas la última vez antes que los
+    estériles (`ofertas_ultimas == 0`), y entre iguales, del más antiguo
+    al más reciente. Excluye lo corrido en las últimas
+    `_HORAS_MIN_ENTRE_CORRIDAS` horas."""
+    from datetime import datetime, timedelta
+
+    ahora_dt = (datetime.fromisoformat(ahora) if ahora
+                else datetime.utcnow())
+    corte = (ahora_dt - timedelta(hours=_HORAS_MIN_ENTRE_CORRIDAS)).isoformat()
+
+    filas = consultar(eng,
+        "SELECT termino, origen, ultima_corrida, ofertas_ultimas"
+        " FROM terminos_busqueda"
+        " WHERE ultima_corrida IS NULL OR ultima_corrida < :corte",
+        {"corte": corte})
+
+    def prioridad(fila):
+        termino, origen, ultima_corrida, ofertas_ultimas = fila
+        if ultima_corrida is None and origen == "usuario":
+            return (0, "", "")
+        if ultima_corrida is None:
+            return (1, "", "")
+        esteril = 1 if not ofertas_ultimas else 0
+        return (2, esteril, ultima_corrida)  # estéril al final; luego más antiguo primero
+
+    ordenados = sorted(filas, key=prioridad)
+    terminos = [f[0] for f in ordenados]
+    return terminos[:limite] if limite is not None else terminos

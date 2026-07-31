@@ -129,3 +129,79 @@ def test_dos_usuarios_pueden_marcar_la_misma_oferta_distinto(tmp_path):
 
     assert db.cargar_marcas(eng, "ana@x.cl")["http://x/1"]["favorita"] == 1
     assert db.cargar_marcas(eng, "beto@x.cl")["http://x/1"]["favorita"] == 0
+
+
+def test_agregar_termino_no_duplica(tmp_path):
+    eng = db.engine(tmp_path / "t.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-07-30T00:00:00")
+    db.agregar_termino(eng, "cajero", "usuario", "2026-08-01T00:00:00")
+    assert db.escalar(eng, "SELECT COUNT(*) FROM terminos_busqueda") == 1
+    assert db.escalar(
+        eng, "SELECT origen FROM terminos_busqueda WHERE termino = 'cajero'"
+    ) == "base"  # el segundo agregar_termino no pisa el origen original
+
+
+def test_registrar_corrida_actualiza_termino_existente(tmp_path):
+    eng = db.engine(tmp_path / "t2.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-07-30T00:00:00")
+    db.registrar_corrida_termino(eng, "cajero", 12, "2026-08-01T10:00:00")
+    fila = db.consultar(
+        eng, "SELECT ultima_corrida, ofertas_ultimas FROM terminos_busqueda"
+             " WHERE termino = 'cajero'")[0]
+    assert tuple(fila) == ("2026-08-01T10:00:00", 12)
+
+
+def test_terminos_pendientes_prioriza_usuario_nunca_corrido(tmp_path):
+    eng = db.engine(tmp_path / "t3.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-07-01T00:00:00")
+    db.agregar_termino(eng, "soldador", "usuario", "2026-08-01T00:00:00")
+    pendientes = db.terminos_pendientes(eng)
+    assert pendientes[0] == "soldador"
+
+
+def test_terminos_pendientes_excluye_corridos_hace_poco(tmp_path):
+    eng = db.engine(tmp_path / "t4.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-07-01T00:00:00")
+    db.registrar_corrida_termino(eng, "cajero", 5, "2026-08-01T09:00:00")
+    # "ahora" es 2 horas después de la corrida: no debe reaparecer
+    pendientes = db.terminos_pendientes(eng, ahora="2026-08-01T11:00:00")
+    assert "cajero" not in pendientes
+
+
+def test_terminos_pendientes_reaparece_pasadas_24_horas(tmp_path):
+    eng = db.engine(tmp_path / "t5.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-07-01T00:00:00")
+    db.registrar_corrida_termino(eng, "cajero", 5, "2026-08-01T09:00:00")
+    pendientes = db.terminos_pendientes(eng, ahora="2026-08-02T10:00:00")
+    assert "cajero" in pendientes
+
+
+def test_terminos_pendientes_respeta_el_limite(tmp_path):
+    eng = db.engine(tmp_path / "t6.db")
+    db.ensure_schema(eng)
+    for i in range(5):
+        db.agregar_termino(eng, f"termino{i}", "base", "2026-07-01T00:00:00")
+    assert len(db.terminos_pendientes(eng, limite=2)) == 2
+
+
+def test_terminos_pendientes_despriorizar_esteriles(tmp_path):
+    # Requisito del spec: "se despriorizan los términos que llevan
+    # corridas sin devolver nada" — un término sin resultados la última
+    # vez debe quedar después de uno con resultados, aunque su corrida
+    # anterior sea más antigua.
+    eng = db.engine(tmp_path / "t7.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "con_resultados", "base", "2026-07-01T00:00:00")
+    db.registrar_corrida_termino(eng, "con_resultados", 10,
+                                 "2026-07-25T00:00:00")  # corrida reciente
+    db.agregar_termino(eng, "esteril", "base", "2026-07-01T00:00:00")
+    db.registrar_corrida_termino(eng, "esteril", 0,
+                                 "2026-07-01T00:00:00")  # corrida antigua
+
+    pendientes = db.terminos_pendientes(eng, ahora="2026-08-05T00:00:00")
+    assert pendientes.index("con_resultados") < pendientes.index("esteril")
