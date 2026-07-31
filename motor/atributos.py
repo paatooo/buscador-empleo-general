@@ -97,8 +97,8 @@ def anios_experiencia(texto) -> int | None:
         rf"de {_NUM} a {_NUM} anos de experiencia",
         rf"entre {_NUM} y {_NUM} anos de experiencia",
         rf"{_NUM}\+? anos? de experiencia",
-        rf"minimo {_NUM} anos?",
-        rf"al menos {_NUM} anos?",
+        rf"minimo {_NUM} anos? de experiencia",
+        rf"al menos {_NUM} anos? de experiencia",
         rf"experiencia (?:minima )?de {_NUM} anos?",
     ]
     for patron in patrones:

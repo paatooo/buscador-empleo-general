@@ -57,6 +57,14 @@ def test_anios_no_confunde_rango_de_edad_con_experiencia():
     assert anios_experiencia("Se buscan personas de 20 a 45 anos, buena presencia") is None
 
 
+def test_anios_no_confunde_edad_minima_con_experiencia():
+    assert anios_experiencia("minimo 18 anos de edad") is None
+
+
+def test_anios_no_confunde_edad_para_conducir_con_experiencia():
+    assert anios_experiencia("requisito: minimo 21 anos para conducir") is None
+
+
 def test_ingles_excluyente_verdadero():
     assert ingles_excluyente("inglés avanzado excluyente") is True
 
