@@ -263,7 +263,7 @@ password = "PEGA_AQUI"
 .venv\Scripts\python.exe -m pytest tests/test_conexion.py -v
 ```
 
-Esperado: 7 passed
+Esperado: 9 passed
 
 - [ ] **Step 5: Agregar SQLAlchemy y el driver de Postgres**
 
@@ -1194,7 +1194,7 @@ def cargar_ofertas(eng: Engine) -> list[dict]:
 .venv\Scripts\python.exe -m pytest tests/test_db.py -v
 ```
 
-Esperado: 24 passed
+Esperado: 26 passed
 
 - [ ] **Step 5: Correr la suite completa del proyecto**
 
@@ -1202,7 +1202,7 @@ Esperado: 24 passed
 .venv\Scripts\python.exe -m pytest tests -v
 ```
 
-Esperado: 105 passed (74 del motor + 7 de conexión + 24 de db)
+Esperado: 109 passed (74 del motor + 9 de conexión + 26 de db)
 
 - [ ] **Step 6: Commit**
 
