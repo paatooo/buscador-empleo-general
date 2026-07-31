@@ -205,3 +205,73 @@ def test_terminos_pendientes_despriorizar_esteriles(tmp_path):
 
     pendientes = db.terminos_pendientes(eng, ahora="2026-08-05T00:00:00")
     assert pendientes.index("con_resultados") < pendientes.index("esteril")
+
+
+def test_upsert_ofertas_ignora_duplicados(tmp_path):
+    eng = db.engine(tmp_path / "o.db")
+    db.ensure_schema(eng)  # ensure_schema ya crea la tabla `ofertas`
+    filas = [{"job_url": "http://x/1", "title": "Cajero", "company": "A",
+              "site": "trabajando", "scrape_date": "2026-07-30"}]
+    insertadas = db.upsert_ofertas(eng, filas, list(filas[0]))
+    assert insertadas == 1
+    insertadas_de_nuevo = db.upsert_ofertas(eng, filas, list(filas[0]))
+    assert insertadas_de_nuevo == 0
+    assert db.escalar(eng, "SELECT COUNT(*) FROM ofertas") == 1
+
+
+def test_upsert_oferta_analisis_no_guarda_columnas_prohibidas(tmp_path):
+    # No debe existir forma de guardar match/cargo_no_afin/electrico/detalle
+    # — son dependientes de perfil, y esta tabla es genérica.
+    eng = db.engine(tmp_path / "o2.db")
+    db.ensure_schema(eng)
+    columnas = {c["name"] for c in
+                __import__("sqlalchemy").inspect(eng).get_columns("oferta_analisis")}
+    prohibidas = {"match", "cargo_no_afin", "electrico", "detalle"}
+    assert columnas.isdisjoint(prohibidas)
+
+
+def test_upsert_oferta_analisis_reemplaza_atomico(tmp_path):
+    eng = db.engine(tmp_path / "o3.db")
+    db.ensure_schema(eng)
+    filas = [{"job_url": "http://x/1", "habilidades": '["Excel"]',
+              "areas": '["administracion"]', "region": "Metropolitana",
+              "modalidad": "Presencial", "tipo_contrato": "Indefinido",
+              "anios_experiencia_pedidos": 2, "ingles_excluyente": 0,
+              "duplicada": 0, "vigencia_estimada": "2026-08-30",
+              "analizado_en": "2026-07-30T10:00:00"}]
+    db.upsert_oferta_analisis(eng, filas)
+    fila = db.consultar(eng, "SELECT habilidades, region FROM oferta_analisis"
+                             " WHERE job_url = 'http://x/1'")[0]
+    assert tuple(fila) == ('["Excel"]', "Metropolitana")
+
+    filas[0]["region"] = "Valparaíso"
+    db.upsert_oferta_analisis(eng, filas)
+    assert db.escalar(
+        eng, "SELECT region FROM oferta_analisis WHERE job_url = 'http://x/1'"
+    ) == "Valparaíso"
+    assert db.escalar(eng, "SELECT COUNT(*) FROM oferta_analisis") == 1
+
+
+def test_cargar_ofertas_hace_join_con_analisis(tmp_path):
+    eng = db.engine(tmp_path / "o4.db")
+    db.ensure_schema(eng)
+    db.ejecutar(eng, "INSERT INTO ofertas (job_url, title, company, site,"
+                     " scrape_date) VALUES ('http://x/1', 'Cajero', 'A',"
+                     " 'trabajando', '2026-07-30')")
+    db.upsert_oferta_analisis(eng, [{
+        "job_url": "http://x/1", "habilidades": '[]', "areas": '[]',
+        "region": "Metropolitana", "modalidad": "Presencial",
+        "tipo_contrato": "Indefinido", "anios_experiencia_pedidos": None,
+        "ingles_excluyente": 0, "duplicada": 0, "vigencia_estimada": None,
+        "analizado_en": "2026-07-30T10:00:00"}])
+    ofertas = db.cargar_ofertas(eng)
+    assert len(ofertas) == 1
+    assert ofertas[0]["job_url"] == "http://x/1"
+    assert ofertas[0]["title"] == "Cajero"
+    assert ofertas[0]["region"] == "Metropolitana"
+
+
+def test_cargar_ofertas_sin_filas_da_lista_vacia(tmp_path):
+    eng = db.engine(tmp_path / "o5.db")
+    db.ensure_schema(eng)
+    assert db.cargar_ofertas(eng) == []

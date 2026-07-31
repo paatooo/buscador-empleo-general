@@ -260,3 +260,66 @@ def terminos_pendientes(eng: Engine, limite: int | None = None,
     ordenados = sorted(filas, key=prioridad)
     terminos = [f[0] for f in ordenados]
     return terminos[:limite] if limite is not None else terminos
+
+
+def upsert_ofertas(eng: Engine, filas: list[dict], columnas: list[str]) -> int:
+    """Inserta ofertas nuevas ignorando las que ya existan (mismo
+    job_url), de forma atómica. Devuelve cuántas filas quedaron realmente
+    insertadas."""
+    if not filas:
+        return 0
+    cols = ", ".join(f'"{c}"' for c in columnas)
+    vals = ", ".join(f":{c}" for c in columnas)
+    with eng.begin() as con:
+        res = con.execute(text(
+            f"INSERT INTO ofertas ({cols}) VALUES ({vals})"
+            " ON CONFLICT (job_url) DO NOTHING"
+        ), filas)
+        return res.rowcount if res.rowcount is not None else 0
+
+
+def upsert_oferta_analisis(eng: Engine, filas: list[dict]) -> None:
+    """Reemplaza el análisis genérico de cada oferta, en una única
+    transacción: si algo falla a mitad de camino, todo se revierte y el
+    análisis anterior queda intacto."""
+    if not filas:
+        return
+    with eng.begin() as con:
+        con.execute(text(
+            "INSERT INTO oferta_analisis"
+            " (job_url, habilidades, areas, region, modalidad,"
+            " tipo_contrato, anios_experiencia_pedidos, ingles_excluyente,"
+            " duplicada, vigencia_estimada, analizado_en)"
+            " VALUES (:job_url, :habilidades, :areas, :region, :modalidad,"
+            " :tipo_contrato, :anios_experiencia_pedidos, :ingles_excluyente,"
+            " :duplicada, :vigencia_estimada, :analizado_en)"
+            " ON CONFLICT (job_url) DO UPDATE SET"
+            " habilidades = excluded.habilidades, areas = excluded.areas,"
+            " region = excluded.region, modalidad = excluded.modalidad,"
+            " tipo_contrato = excluded.tipo_contrato,"
+            " anios_experiencia_pedidos = excluded.anios_experiencia_pedidos,"
+            " ingles_excluyente = excluded.ingles_excluyente,"
+            " duplicada = excluded.duplicada,"
+            " vigencia_estimada = excluded.vigencia_estimada,"
+            " analizado_en = excluded.analizado_en"
+        ), filas)
+
+
+def cargar_ofertas(eng: Engine) -> list[dict]:
+    """Ofertas con su análisis genérico ya unido, listas para que una capa
+    posterior calcule el puntaje por usuario con motor.puntaje.puntuar.
+    Asume que `ensure_schema` ya corrió (la tabla `ofertas` existe siempre,
+    aunque esté vacía)."""
+    filas = consultar(eng, """
+        SELECT o.job_url, o.title, o.company, o.site, o.scrape_date,
+               a.habilidades, a.areas, a.region, a.modalidad,
+               a.tipo_contrato, a.anios_experiencia_pedidos,
+               a.ingles_excluyente, a.duplicada, a.vigencia_estimada
+        FROM ofertas o
+        LEFT JOIN oferta_analisis a ON a.job_url = o.job_url
+    """)
+    columnas = ["job_url", "title", "company", "site", "scrape_date",
+                "habilidades", "areas", "region", "modalidad",
+                "tipo_contrato", "anios_experiencia_pedidos",
+                "ingles_excluyente", "duplicada", "vigencia_estimada"]
+    return [dict(zip(columnas, fila)) for fila in filas]
