@@ -297,7 +297,7 @@ Esperado: 8 passed
 Agregar a `requirements.txt`:
 
 ```
-streamlit>=1.35
+streamlit>=1.49
 pandas>=2.2
 plotly>=5.20
 ```
@@ -475,6 +475,9 @@ pestaña ve el mercado completo, no un recorte.
     fecha de captura (nada que mostrar como tendencia todavía)
   - `radar_empresas(df) -> pandas.DataFrame` — columnas `empresa`,
     `ofertas`, `areas`, `top_habilidades`
+  - `sin_duplicadas(ofertas: list[dict]) -> list[dict]` y
+    `estado_vigencia(oferta: dict) -> str` — agregadas en la revisión
+    final de rama, ver la sección del final
 
 - [ ] **Step 1: Escribir la prueba que falla**
 
@@ -570,13 +573,21 @@ import pandas as pd
 Agregar al final de `app_data.py`:
 
 ```python
+def _lista_json(valor) -> list:
+    # Chequea el tipo y no la verdad del valor: pandas convierte los NULL
+    # del LEFT JOIN de db.cargar_ofertas (oferta recolectada pero todavía
+    # no analizada) en NaN, y NaN es truthy.
+    if not isinstance(valor, str) or not valor:
+        return []
+    return json.loads(valor)
+
+
 def a_dataframe(ofertas: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(ofertas)
     if df.empty:
         return df
-    df["habilidades"] = df["habilidades"].map(
-        lambda s: json.loads(s) if s else [])
-    df["areas"] = df["areas"].map(lambda s: json.loads(s) if s else [])
+    df["habilidades"] = df["habilidades"].map(_lista_json)
+    df["areas"] = df["areas"].map(_lista_json)
     return df
 
 
@@ -880,7 +891,8 @@ def _tarjeta_oferta(oferta: dict, marcas: dict, usuario_id: str, prefijo: str):
         st.markdown(f"**{oferta['title']}** — {oferta['company']}")
         st.caption(f"{oferta.get('region') or 'Sin especificar'} · "
                    f"{oferta.get('modalidad') or 'Sin especificar'} · "
-                   f"Match: {oferta['match']}")
+                   f"Match: {oferta['match']} · "
+                   f"{ESTADOS_VIGENCIA[app_data.estado_vigencia(oferta)]}")
         c1, c2, c3 = st.columns(3)
         favorita = c1.checkbox("⭐ Favorita", value=bool(mk["favorita"]),
                                key=f"{prefijo}_fav_{url}")
@@ -905,7 +917,10 @@ def tab_ofertas(perfil, usuario_id: str):
         st.info("Todavía no hay ofertas recolectadas. Vuelve a intentarlo "
                 "más tarde.")
         return
-    puntuadas = app_data.puntuar_ofertas(crudas, perfil)
+    # sin_duplicadas: el mismo aviso republicado en otra fuente aparecería
+    # dos veces seguidas, con match idéntico (Hallazgo 2 de la revisión
+    # final de rama).
+    puntuadas = app_data.puntuar_ofertas(app_data.sin_duplicadas(crudas), perfil)
     if not puntuadas:
         st.info("No encontramos ofertas que calcen con los cargos que "
                 "buscás todavía. Probá agregar otro cargo en tu perfil.")
@@ -1067,7 +1082,7 @@ def tab_filtro_avanzado(perfil, usuario_id: str):
     st.dataframe(
         sel[["title", "company", "region", "modalidad", "tipo_contrato",
              "match", "site"]].sort_values("match", ascending=False),
-        use_container_width=True, key="av_tabla")
+        width="stretch", key="av_tabla")
 ```
 
 Actualizar `st.tabs(...)` en `main()`:
@@ -1129,21 +1144,50 @@ import plotly.express as px
 Agregar antes de `def main():`:
 
 ```python
+def _foto_del_momento(df):
+    """Áreas y habilidades más pedidas en la única corrida que hay."""
+    areas = app_data.conteo_areas(df)
+    if not areas.empty:
+        st.plotly_chart(
+            px.bar(x=areas.values, y=areas.index, orientation="h",
+                   labels={"x": "ofertas", "y": "área"},
+                   title="Ofertas por área"),
+            width="stretch", key="td_foto_areas")
+    habilidades = app_data.conteo_habilidades(df)
+    if habilidades.empty:
+        st.caption("Ninguna de las ofertas capturadas menciona habilidades "
+                   "del catálogo todavía.")
+        return
+    st.plotly_chart(
+        px.bar(habilidades.head(10), x="ofertas", y="habilidad",
+               orientation="h", title="Top 10 habilidades pedidas"),
+        width="stretch", key="td_foto_habilidades")
+    st.caption("«pct» es el porcentaje de las ofertas capturadas que pide "
+               "esa habilidad.")
+    st.dataframe(habilidades, width="stretch", key="td_foto_tabla")
+
+
 def tab_tendencias(perfil, usuario_id: str):
-    crudas = _ofertas_crudas()
+    # sin_duplicadas: contar dos veces el mismo aviso republicado infla la
+    # serie de un área o una habilidad sin que haya más demanda detrás.
+    crudas = app_data.sin_duplicadas(_ofertas_crudas())
     df = app_data.a_dataframe(crudas)
     if df.empty:
         st.info("Todavía no hay ofertas recolectadas.")
         return
     tendencias = app_data.tendencias_por_fecha(df)
     if tendencias is None:
-        st.info("Todavía hay una sola fecha de captura — vuelve cuando "
-                "haya al menos dos corridas para ver una tendencia real.")
+        # Con una sola corrida no hay serie, pero sí hay algo que mirar.
+        # Sin esto la pestaña queda vacía justamente el día 1.
+        st.info("Todavía hay una sola fecha de captura, así que no hay "
+                "tendencia en el tiempo para mostrar — por ahora, la foto "
+                "de lo que se está pidiendo hoy.")
+        _foto_del_momento(df)
         return
     st.plotly_chart(
         px.line(tendencias["areas"], x="scrape_date", y="ofertas",
                color="area", title="Ofertas por área en el tiempo"),
-        use_container_width=True, key="td_areas")
+        width="stretch", key="td_areas")
     top_habilidades = (tendencias["habilidades"].groupby("habilidad")["ofertas"]
                        .sum().nlargest(10).index)
     hab_top = tendencias["habilidades"][
@@ -1151,23 +1195,31 @@ def tab_tendencias(perfil, usuario_id: str):
     st.plotly_chart(
         px.line(hab_top, x="scrape_date", y="ofertas", color="habilidad",
                title="Top 10 habilidades pedidas en el tiempo"),
-        use_container_width=True, key="td_habilidades")
+        width="stretch", key="td_habilidades")
 
 
 def tab_empresas(perfil, usuario_id: str):
-    crudas = _ofertas_crudas()
+    crudas = app_data.sin_duplicadas(_ofertas_crudas())
     df = app_data.a_dataframe(crudas)
     if df.empty:
         st.info("Todavía no hay ofertas recolectadas.")
         return
     tabla = app_data.radar_empresas(df)
     st.write(f"{len(tabla)} empresas con avisos publicados.")
-    st.dataframe(tabla, use_container_width=True, key="em_tabla")
+    st.dataframe(tabla, width="stretch", key="em_tabla")
 
 
 def tab_acerca(perfil, usuario_id: str):
     crudas = _ofertas_crudas()
+    unicas = len(app_data.sin_duplicadas(crudas))
     st.write(f"**Ofertas en la base:** {len(crudas)}")
+    repetidas = len(crudas) - unicas
+    if repetidas:
+        cuantas = ("Una es" if repetidas == 1
+                   else f"{repetidas} son")
+        st.caption(f"{cuantas} el mismo aviso publicado en más de una "
+                   f"fuente: el resto de las pestañas trabaja con las "
+                   f"{unicas} ofertas distintas.")
     if crudas:
         ultima = max((o.get("scrape_date") or "" for o in crudas), default="")
         st.write(f"**Última corrida con datos:** {ultima or 'sin registro'}")
@@ -1291,6 +1343,66 @@ verifica corriendo la app de verdad, como pide el spec.
    pendiente en el plan de Recolección) — sin esto, alguien que entra por
    primera vez sin un perfil que calce con nada ve la app vacía hasta que
    la búsqueda en vivo (plan 1) exista.
+
+## Hallazgos de la revisión final de rama (2026-08-02)
+
+Las siete tareas pasaron su revisión individual sin observaciones. La
+revisión de toda la rama contra `main` —que es la que en los tres planes
+anteriores encontró los bugs de verdad— encontró dos, ambos en el seam
+entre la app y la capa de datos ya mergeada. Los bloques de código de
+arriba ya están corregidos; esto queda como registro de por qué son así.
+
+**Hallazgo 1 (crítico): una oferta recolectada pero todavía no analizada
+tumbaba la página entera.** `db.cargar_ofertas` hace LEFT JOIN contra
+`oferta_analisis`, así que esas ofertas llegan con todas las columnas de
+análisis en NULL. pandas convierte esos `None` en `NaN`, y `NaN` es
+truthy: `json.loads(s) if s else []` en `a_dataframe` le pasaba el `NaN`
+a `json` y reventaba con `TypeError`. Como `main()` llama las pestañas en
+secuencia, moría en "Filtro avanzado" y Tendencias, Empresas y Acerca ni
+llegaban a renderizar. No es un caso de borde: `recolectar.py` inserta
+ofertas dentro de su bucle (línea 75) y recién analiza al final (línea
+88), así que ése es el estado normal durante toda una corrida, y el
+permanente si la corrida se corta. `@st.cache_data(ttl=300)` además
+congelaba el estado roto cinco minutos. Arreglado con `_lista_json`, que
+chequea el tipo y no la verdad del valor.
+
+**Hallazgo 2 (importante): la deduplicación no la consumía nadie.**
+`analizar.py` calcula `duplicada` —y el plan de Recolección ya había
+gastado una ronda de revisión en que respetara la región—, pero ninguna
+pestaña lo miraba: "Ofertas para ti" mostraba el mismo aviso republicado
+dos veces seguidas con match idéntico, y "Empresas" y "Tendencias" lo
+contaban dos veces. Justo al revés de lo que promete el texto de "Filtro
+avanzado". Medido en una base de prueba: 4 tarjetas en "Ofertas para ti"
+contra 3 filas en "Filtro avanzado", sin explicación visible. Arreglado
+con `sin_duplicadas`, que trata `duplicada IS NULL` como "todavía no se
+sabe" y no como duplicada, para no esconder ofertas recién recolectadas.
+
+**Dos piezas que el plan construyó y nunca cableó.** `vigencia_estimada`
+se traía desde la base y `ESTADOS_VIGENCIA` estaba definido desde la Task
+5, pero nada lo mostraba; y con una sola fecha de captura —el estado del
+día 1— "Tendencias" no mostraba nada más que un mensaje, teniendo
+`conteo_areas` y `conteo_habilidades` ya escritas y probadas desde la
+Task 3. Ambas cableadas. Ojo con `vigencia_estimada`: lo guardado es el
+JSON completo que devuelve `motor.atributos.vigencia`
+(`{"dias_publicada", "dias_restantes_est", "estado"}`), no el estado
+suelto — de ahí `estado_vigencia`, que lo decodifica y cae en
+`"sin_fecha"` ante cualquier cosa ilegible.
+
+`es_seleccion_nueva` quedó sin usar y así se queda: el diseño final usa
+checkboxes por tarjeta, no selección de filas en una tabla, así que el
+bug que esa función previene no existe en esta app. Si alguna pestaña
+futura muestra una tabla con `on_select`, ahí sí se necesita.
+
+La suite quedó en **202 pruebas** (195 heredadas + 7 de esta revisión).
+`app.py` se verificó con `streamlit.testing.v1.AppTest`, que corre el
+código real contra una base real sin navegador: base sana, base con
+oferta sin analizar, base vacía, una y dos fechas de captura, los cuatro
+estados de vigencia, y las cinco pestañas juntas sin `DuplicateElementId`.
+
+**Sigue pendiente el chequeo visual en un navegador de verdad** (viewport
+móvil ~375px, consola sin errores) — el navegador embebido de la sesión
+tuvo una falla de compositing durante todo el trabajo. No es un defecto
+conocido del código, es verificación que no se pudo hacer.
 
 ## Pendiente de calibración
 
