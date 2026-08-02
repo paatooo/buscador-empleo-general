@@ -90,3 +90,51 @@ def test_puntuar_ofertas_de_un_usuario_no_afecta_a_otro():
         ofertas, Perfil(cargos_buscados=["cajero"]))
     assert con_evitar == []
     assert len(sin_evitar) == 1
+
+
+def test_set_marca_y_marcas_de_hacen_roundtrip(tmp_path):
+    app_data.set_marca("ana@x.cl", "http://x/1", "favorita", True,
+                       "2026-08-03", db_path=tmp_path / "m.db")
+    marcas = app_data.marcas_de("ana@x.cl", db_path=tmp_path / "m.db")
+    assert marcas["http://x/1"]["favorita"] == 1
+
+
+def test_marcas_de_un_usuario_no_incluye_las_de_otro(tmp_path):
+    app_data.set_marca("ana@x.cl", "http://x/1", "favorita", True,
+                       "2026-08-03", db_path=tmp_path / "m2.db")
+    app_data.set_marca("beto@x.cl", "http://x/2", "postulada", True,
+                       "2026-08-03", db_path=tmp_path / "m2.db")
+    assert list(app_data.marcas_de("ana@x.cl", db_path=tmp_path / "m2.db")) == ["http://x/1"]
+
+
+def test_set_marca_rechaza_campo_invalido(tmp_path):
+    try:
+        app_data.set_marca("ana@x.cl", "http://x/1", "campo_invalido", True,
+                           "2026-08-03", db_path=tmp_path / "m3.db")
+        assert False, "debió rechazar el campo"
+    except ValueError:
+        pass
+
+
+def test_es_seleccion_nueva_la_primera_vez():
+    estado = {}
+    assert app_data.es_seleccion_nueva(estado, "tabla1", "http://x/1") is True
+
+
+def test_es_seleccion_nueva_no_se_repite_para_la_misma_url():
+    estado = {}
+    app_data.es_seleccion_nueva(estado, "tabla1", "http://x/1")
+    assert app_data.es_seleccion_nueva(estado, "tabla1", "http://x/1") is False
+
+
+def test_es_seleccion_nueva_vuelve_a_ser_true_con_otra_url():
+    estado = {}
+    app_data.es_seleccion_nueva(estado, "tabla1", "http://x/1")
+    assert app_data.es_seleccion_nueva(estado, "tabla1", "http://x/2") is True
+
+
+def test_es_seleccion_nueva_no_cruza_entre_tablas_distintas():
+    estado = {}
+    app_data.es_seleccion_nueva(estado, "tabla1", "http://x/1")
+    # la misma url, pero en OTRA tabla (key distinta): sigue siendo nueva
+    assert app_data.es_seleccion_nueva(estado, "tabla2", "http://x/1") is True

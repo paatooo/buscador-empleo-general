@@ -75,3 +75,37 @@ def puntuar_ofertas(ofertas: list[dict], perfil: Perfil) -> list[dict]:
         resultado.append(fila)
     resultado.sort(key=lambda f: f["match"], reverse=True)
     return resultado
+
+
+def marcas_de(usuario_id: str, db_path=None) -> dict:
+    eng = db.engine(db_path)
+    db.ensure_schema(eng)
+    return db.cargar_marcas(eng, usuario_id)
+
+
+def set_marca(usuario_id: str, job_url: str, campo: str, valor: bool,
+             ahora: str, db_path=None) -> None:
+    if campo not in db.CAMPOS_MARCA:
+        raise ValueError(f"campo inválido: {campo}")
+    eng = db.engine(db_path)
+    db.ensure_schema(eng)
+    db.upsert_marca(eng, usuario_id, job_url, campo, valor, ahora)
+
+
+def es_seleccion_nueva(estado_sesion: dict, key: str, valor: str) -> bool:
+    """¿Este valor es una selección genuinamente nueva en esta tabla?
+
+    Streamlit recuerda "la fila en tal posición" seleccionada entre
+    recargas (por `key`), pero la lista se reordena todo el tiempo (nuevo
+    match, nuevos datos) — así que esa misma posición puede apuntar a OTRA
+    oferta en la siguiente recarga. Sin este chequeo, cada recarga volvía a
+    marcar como revisada lo que fuera que hubiera en esa fila en ese
+    momento, sin que la persona hiciera click. Por eso solo se marca la
+    primera vez que ESTE valor en particular queda seleccionado.
+
+    Función pura sobre un dict (en producción, st.session_state) para
+    poder probarla sin levantar el runtime de Streamlit."""
+    clave = f"_ultima_vista_{key}"
+    es_nueva = estado_sesion.get(clave) != valor
+    estado_sesion[clave] = valor
+    return es_nueva
