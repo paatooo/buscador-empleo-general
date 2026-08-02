@@ -641,7 +641,7 @@ def radar_empresas(df: pd.DataFrame) -> pd.DataFrame:
 .venv\Scripts\python.exe -m pytest tests/test_app_data.py -v
 ```
 
-Esperado: 24 passed
+Esperado: 23 passed
 
 - [ ] **Step 5: Correr la suite completa**
 
@@ -649,7 +649,7 @@ Esperado: 24 passed
 .venv\Scripts\python.exe -m pytest tests -v
 ```
 
-Esperado: 196 passed (172 de antes + 24 de app_data)
+Esperado: 195 passed (172 de antes + 23 de app_data)
 
 - [ ] **Step 6: Commit**
 
@@ -1232,7 +1232,7 @@ def main():
 .venv\Scripts\python.exe -m pytest tests -v
 ```
 
-Esperado: 196 passed, sin regresiones
+Esperado: 195 passed, sin regresiones
 
 - [ ] **Step 3: Commit**
 
