@@ -123,6 +123,23 @@ def sin_duplicadas(ofertas: list[dict]) -> list[dict]:
     return [o for o in ofertas if o.get("duplicada") != 1]
 
 
+def estado_vigencia(oferta: dict) -> str:
+    """Estado estimado de la oferta, según lo que dejó `analizar.py`.
+
+    Viene como el JSON completo que devuelve `motor.atributos.vigencia`
+    (días publicada, días restantes y estado), no como el estado suelto.
+    Cualquier cosa que no se pueda leer cae en "sin_fecha": una oferta con
+    el veredicto ilegible se muestra igual, solo que sin afirmar nada
+    sobre su vigencia."""
+    try:
+        datos = json.loads(oferta["vigencia_estimada"])
+    except (KeyError, TypeError, ValueError):
+        return "sin_fecha"
+    if not isinstance(datos, dict):
+        return "sin_fecha"
+    return datos.get("estado") or "sin_fecha"
+
+
 def _lista_json(valor) -> list:
     """Decodifica una columna JSON de `oferta_analisis`.
 

@@ -117,7 +117,8 @@ def _tarjeta_oferta(oferta: dict, marcas: dict, usuario_id: str, prefijo: str):
         st.markdown(f"**{oferta['title']}** — {oferta['company']}")
         st.caption(f"{oferta.get('region') or 'Sin especificar'} · "
                    f"{oferta.get('modalidad') or 'Sin especificar'} · "
-                   f"Match: {oferta['match']}")
+                   f"Match: {oferta['match']} · "
+                   f"{ESTADOS_VIGENCIA[app_data.estado_vigencia(oferta)]}")
         c1, c2, c3 = st.columns(3)
         favorita = c1.checkbox("⭐ Favorita", value=bool(mk["favorita"]),
                                key=f"{prefijo}_fav_{url}")
@@ -232,6 +233,29 @@ def tab_filtro_avanzado(perfil, usuario_id: str):
         width="stretch", key="av_tabla")
 
 
+def _foto_del_momento(df):
+    """Áreas y habilidades más pedidas en la única corrida que hay."""
+    areas = app_data.conteo_areas(df)
+    if not areas.empty:
+        st.plotly_chart(
+            px.bar(x=areas.values, y=areas.index, orientation="h",
+                   labels={"x": "ofertas", "y": "área"},
+                   title="Ofertas por área"),
+            width="stretch", key="td_foto_areas")
+    habilidades = app_data.conteo_habilidades(df)
+    if habilidades.empty:
+        st.caption("Ninguna de las ofertas capturadas menciona habilidades "
+                   "del catálogo todavía.")
+        return
+    st.plotly_chart(
+        px.bar(habilidades.head(10), x="ofertas", y="habilidad",
+               orientation="h", title="Top 10 habilidades pedidas"),
+        width="stretch", key="td_foto_habilidades")
+    st.caption("«pct» es el porcentaje de las ofertas capturadas que pide "
+               "esa habilidad.")
+    st.dataframe(habilidades, width="stretch", key="td_foto_tabla")
+
+
 def tab_tendencias(perfil, usuario_id: str):
     # Igual que en "Ofertas para ti": contar dos veces el mismo aviso
     # republicado infla la serie de un área o una habilidad sin que haya
@@ -243,8 +267,13 @@ def tab_tendencias(perfil, usuario_id: str):
         return
     tendencias = app_data.tendencias_por_fecha(df)
     if tendencias is None:
-        st.info("Todavía hay una sola fecha de captura — vuelve cuando "
-                "haya al menos dos corridas para ver una tendencia real.")
+        # Con una sola corrida no hay serie en el tiempo, pero sí hay algo
+        # que mirar: la foto del momento. Sin esto la pestaña queda vacía
+        # justamente el día 1, que es cuando más gente la abre.
+        st.info("Todavía hay una sola fecha de captura, así que no hay "
+                "tendencia en el tiempo para mostrar — por ahora, la foto "
+                "de lo que se está pidiendo hoy.")
+        _foto_del_momento(df)
         return
     st.plotly_chart(
         px.line(tendencias["areas"], x="scrape_date", y="ofertas",

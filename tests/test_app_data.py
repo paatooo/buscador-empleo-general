@@ -254,6 +254,24 @@ def test_sin_duplicadas_descarta_las_marcadas():
     assert [o["job_url"] for o in app_data.sin_duplicadas(ofertas)] == ["http://x/1"]
 
 
+def test_estado_vigencia_lee_el_estado_del_json():
+    oferta = _oferta(vigencia_estimada='{"dias_publicada": 3,'
+                                       ' "dias_restantes_est": 27,'
+                                       ' "estado": "activa"}')
+    assert app_data.estado_vigencia(oferta) == "activa"
+
+
+def test_estado_vigencia_sin_analisis_da_sin_fecha():
+    assert app_data.estado_vigencia(_sin_analisis()) == "sin_fecha"
+
+
+def test_estado_vigencia_tolera_un_valor_ilegible():
+    """No vale tumbar la tarjeta por un JSON viejo o a medio escribir: sin
+    veredicto legible, la oferta se muestra como «sin fecha»."""
+    assert app_data.estado_vigencia(_oferta(vigencia_estimada="{roto")) == "sin_fecha"
+    assert app_data.estado_vigencia(_oferta(vigencia_estimada=float("nan"))) == "sin_fecha"
+
+
 def test_sin_duplicadas_conserva_las_todavia_no_analizadas():
     """`duplicada` en NULL es «no se sabe», no «es duplicada» — una oferta
     recién recolectada no debe desaparecer de la vista hasta que
