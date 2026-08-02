@@ -96,6 +96,62 @@ def formulario_perfil(perfil_actual: Perfil | None) -> Perfil | None:
     return nuevo
 
 
+ESTADOS_VIGENCIA = {"activa": "🟢 Activa", "por_vencer": "🟠 Por vencer",
+                    "probablemente_cerrada": "⚫ Prob. cerrada",
+                    "sin_fecha": "⚪ Sin fecha"}
+
+
+@st.cache_data(ttl=300)
+def _ofertas_crudas(db_path=None):
+    import db
+    eng = db.engine(db_path)
+    db.ensure_schema(eng)
+    return db.cargar_ofertas(eng)
+
+
+def _tarjeta_oferta(oferta: dict, marcas: dict, usuario_id: str, prefijo: str):
+    url = oferta["job_url"]
+    mk = marcas.get(url, {"revisada": 0, "favorita": 0, "postulada": 0})
+    with st.container(border=True):
+        st.markdown(f"**{oferta['title']}** — {oferta['company']}")
+        st.caption(f"{oferta.get('region') or 'Sin especificar'} · "
+                   f"{oferta.get('modalidad') or 'Sin especificar'} · "
+                   f"Match: {oferta['match']}")
+        c1, c2, c3 = st.columns(3)
+        favorita = c1.checkbox("⭐ Favorita", value=bool(mk["favorita"]),
+                               key=f"{prefijo}_fav_{url}")
+        postulada = c2.checkbox("📨 Postulada", value=bool(mk["postulada"]),
+                                key=f"{prefijo}_post_{url}")
+        revisada = c3.checkbox("✔ Revisada", value=bool(mk["revisada"]),
+                               key=f"{prefijo}_rev_{url}")
+        if favorita != bool(mk["favorita"]):
+            app_data.set_marca(usuario_id, url, "favorita", favorita, _ahora())
+        if postulada != bool(mk["postulada"]):
+            app_data.set_marca(usuario_id, url, "postulada", postulada, _ahora())
+        if revisada != bool(mk["revisada"]):
+            app_data.set_marca(usuario_id, url, "revisada", revisada, _ahora())
+        with st.expander("Ver descripción"):
+            st.write(oferta.get("description") or "(sin descripción)")
+            st.caption(f"Fuente: {oferta['site']} · {url}")
+
+
+def tab_ofertas(perfil, usuario_id: str):
+    crudas = _ofertas_crudas()
+    if not crudas:
+        st.info("Todavía no hay ofertas recolectadas. Vuelve a intentarlo "
+                "más tarde.")
+        return
+    puntuadas = app_data.puntuar_ofertas(crudas, perfil)
+    if not puntuadas:
+        st.info("No encontramos ofertas que calcen con los cargos que "
+                "buscás todavía. Probá agregar otro cargo en tu perfil.")
+        return
+    st.write(f"{len(puntuadas)} ofertas para vos, ordenadas por match.")
+    marcas = app_data.marcas_de(usuario_id)
+    for oferta in puntuadas[:50]:
+        _tarjeta_oferta(oferta, marcas, usuario_id, "of")
+
+
 def main():
     if "usuario_id" not in st.session_state:
         correo = pantalla_correo()
@@ -118,6 +174,13 @@ def main():
                 return  # primera vez, sin perfil todavía: no hay nada más que mostrar
         else:
             perfil = nuevo
+
+    if perfil is None:
+        return
+
+    (t1,) = st.tabs(["🎯 Ofertas para ti"])
+    with t1:
+        tab_ofertas(perfil, usuario_id)
 
 
 if __name__ == "__main__":
