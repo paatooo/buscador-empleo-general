@@ -142,7 +142,10 @@ def tab_ofertas(perfil, usuario_id: str):
         st.info("Todavía no hay ofertas recolectadas. Vuelve a intentarlo "
                 "más tarde.")
         return
-    puntuadas = app_data.puntuar_ofertas(crudas, perfil)
+    # Sin esto el mismo aviso republicado en otra fuente aparece dos veces
+    # seguidas, con idéntico match — "Filtro avanzado" es el único lugar
+    # donde las duplicadas se pueden ver, y así lo dice su propio texto.
+    puntuadas = app_data.puntuar_ofertas(app_data.sin_duplicadas(crudas), perfil)
     if not puntuadas:
         st.info("No encontramos ofertas que calcen con los cargos que "
                 "buscás todavía. Probá agregar otro cargo en tu perfil.")
@@ -226,11 +229,14 @@ def tab_filtro_avanzado(perfil, usuario_id: str):
     st.dataframe(
         sel[["title", "company", "region", "modalidad", "tipo_contrato",
              "match", "site"]].sort_values("match", ascending=False),
-        use_container_width=True, key="av_tabla")
+        width="stretch", key="av_tabla")
 
 
 def tab_tendencias(perfil, usuario_id: str):
-    crudas = _ofertas_crudas()
+    # Igual que en "Ofertas para ti": contar dos veces el mismo aviso
+    # republicado infla la serie de un área o una habilidad sin que haya
+    # más demanda real detrás.
+    crudas = app_data.sin_duplicadas(_ofertas_crudas())
     df = app_data.a_dataframe(crudas)
     if df.empty:
         st.info("Todavía no hay ofertas recolectadas.")
@@ -243,7 +249,7 @@ def tab_tendencias(perfil, usuario_id: str):
     st.plotly_chart(
         px.line(tendencias["areas"], x="scrape_date", y="ofertas",
                color="area", title="Ofertas por área en el tiempo"),
-        use_container_width=True, key="td_areas")
+        width="stretch", key="td_areas")
     top_habilidades = (tendencias["habilidades"].groupby("habilidad")["ofertas"]
                        .sum().nlargest(10).index)
     hab_top = tendencias["habilidades"][
@@ -251,23 +257,31 @@ def tab_tendencias(perfil, usuario_id: str):
     st.plotly_chart(
         px.line(hab_top, x="scrape_date", y="ofertas", color="habilidad",
                title="Top 10 habilidades pedidas en el tiempo"),
-        use_container_width=True, key="td_habilidades")
+        width="stretch", key="td_habilidades")
 
 
 def tab_empresas(perfil, usuario_id: str):
-    crudas = _ofertas_crudas()
+    crudas = app_data.sin_duplicadas(_ofertas_crudas())
     df = app_data.a_dataframe(crudas)
     if df.empty:
         st.info("Todavía no hay ofertas recolectadas.")
         return
     tabla = app_data.radar_empresas(df)
     st.write(f"{len(tabla)} empresas con avisos publicados.")
-    st.dataframe(tabla, use_container_width=True, key="em_tabla")
+    st.dataframe(tabla, width="stretch", key="em_tabla")
 
 
 def tab_acerca(perfil, usuario_id: str):
     crudas = _ofertas_crudas()
+    unicas = len(app_data.sin_duplicadas(crudas))
     st.write(f"**Ofertas en la base:** {len(crudas)}")
+    repetidas = len(crudas) - unicas
+    if repetidas:
+        cuantas = ("Una es" if repetidas == 1
+                   else f"{repetidas} son")
+        st.caption(f"{cuantas} el mismo aviso publicado en más de una "
+                   f"fuente: el resto de las pestañas trabaja con las "
+                   f"{unicas} ofertas distintas.")
     if crudas:
         ultima = max((o.get("scrape_date") or "" for o in crudas), default="")
         st.write(f"**Última corrida con datos:** {ultima or 'sin registro'}")

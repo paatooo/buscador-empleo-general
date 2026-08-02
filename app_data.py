@@ -113,13 +113,34 @@ def es_seleccion_nueva(estado_sesion: dict, key: str, valor: str) -> bool:
     return es_nueva
 
 
+def sin_duplicadas(ofertas: list[dict]) -> list[dict]:
+    """Descarta las que `analizar.py` marcó como el mismo aviso republicado.
+
+    `duplicada` en NULL significa «todavía no analizada», no «duplicada»:
+    `recolectar.py` inserta ofertas dentro de su bucle y recién analiza al
+    final, así que hay una ventana en la que una oferta legítima no tiene
+    veredicto. Ante la duda se muestra."""
+    return [o for o in ofertas if o.get("duplicada") != 1]
+
+
+def _lista_json(valor) -> list:
+    """Decodifica una columna JSON de `oferta_analisis`.
+
+    Chequea el tipo en vez de la verdad del valor porque pandas convierte
+    los NULL del LEFT JOIN (oferta recolectada pero aún no analizada) en
+    NaN, y `NaN` es truthy: `json.loads(s) if s else []` le pasaba el NaN
+    a json y reventaba con TypeError, tumbando la página entera."""
+    if not isinstance(valor, str) or not valor:
+        return []
+    return json.loads(valor)
+
+
 def a_dataframe(ofertas: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(ofertas)
     if df.empty:
         return df
-    df["habilidades"] = df["habilidades"].map(
-        lambda s: json.loads(s) if s else [])
-    df["areas"] = df["areas"].map(lambda s: json.loads(s) if s else [])
+    df["habilidades"] = df["habilidades"].map(_lista_json)
+    df["areas"] = df["areas"].map(_lista_json)
     return df
 
 

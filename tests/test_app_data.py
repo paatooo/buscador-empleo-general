@@ -208,3 +208,55 @@ def test_radar_empresas_agrupa_por_empresa():
     fila = tabla[tabla["empresa"] == "Super X"].iloc[0]
     assert fila["ofertas"] == 2
     assert "Excel" in fila["top_habilidades"]
+
+
+# --- ofertas recolectadas pero todavía no analizadas ---
+# `db.cargar_ofertas` hace LEFT JOIN contra `oferta_analisis`, así que
+# mientras `recolectar.py` corre (inserta por término dentro del bucle y
+# analiza recién al final) hay ofertas con todas las columnas de análisis
+# en NULL. pandas convierte esos None en NaN, que es truthy — de ahí que
+# un chequeo por verdad no alcance.
+
+
+def _sin_analisis(**cambios):
+    base = _oferta(**cambios)
+    base.update(habilidades=None, areas=None, region=None, modalidad=None,
+                tipo_contrato=None, anios_experiencia_pedidos=None,
+                ingles_excluyente=None, duplicada=None,
+                vigencia_estimada=None)
+    return base
+
+
+def test_a_dataframe_tolera_ofertas_sin_analisis():
+    ofertas = [_oferta(job_url="http://x/1", habilidades='["Excel"]'),
+               _sin_analisis(job_url="http://x/2")]
+    df = app_data.a_dataframe(ofertas)
+    assert df[df["job_url"] == "http://x/2"].iloc[0]["habilidades"] == []
+    assert df[df["job_url"] == "http://x/2"].iloc[0]["areas"] == []
+
+
+def test_agregaciones_toleran_ofertas_sin_analisis():
+    df = app_data.a_dataframe([
+        _oferta(job_url="http://x/1", habilidades='["Excel"]'),
+        _sin_analisis(job_url="http://x/2", scrape_date="2026-08-02"),
+    ])
+    assert app_data.conteo_habilidades(df).iloc[0]["ofertas"] == 1
+    assert app_data.tendencias_por_fecha(df) is not None
+    assert len(app_data.radar_empresas(df)) == 1
+
+
+# --- duplicadas ---
+
+
+def test_sin_duplicadas_descarta_las_marcadas():
+    ofertas = [_oferta(job_url="http://x/1", duplicada=0),
+               _oferta(job_url="http://x/2", duplicada=1)]
+    assert [o["job_url"] for o in app_data.sin_duplicadas(ofertas)] == ["http://x/1"]
+
+
+def test_sin_duplicadas_conserva_las_todavia_no_analizadas():
+    """`duplicada` en NULL es «no se sabe», no «es duplicada» — una oferta
+    recién recolectada no debe desaparecer de la vista hasta que
+    `analizar.py` se pronuncie."""
+    ofertas = [_sin_analisis(job_url="http://x/1")]
+    assert len(app_data.sin_duplicadas(ofertas)) == 1
