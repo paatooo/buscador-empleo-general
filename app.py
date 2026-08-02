@@ -152,6 +152,82 @@ def tab_ofertas(perfil, usuario_id: str):
         _tarjeta_oferta(oferta, marcas, usuario_id, "of")
 
 
+def tab_filtro_avanzado(perfil, usuario_id: str):
+    crudas = _ofertas_crudas()
+    if not crudas:
+        st.info("Todavía no hay ofertas recolectadas.")
+        return
+    puntuadas = app_data.puntuar_ofertas(crudas, perfil)
+    df = app_data.a_dataframe(puntuadas)
+    if df.empty:
+        st.info("No hay ofertas que calcen con tu perfil todavía.")
+        return
+
+    st.caption("Filtro con control total sobre cada criterio — a "
+               "diferencia de «Ofertas para ti», acá podés ver también lo "
+               "que normalmente queda afuera (duplicadas, con inglés "
+               "excluyente, etc.).")
+
+    c1, c2 = st.columns(2)
+    match_min, match_max = c1.slider("Rango de match", 0, 100, (0, 100),
+                                     key="av_match")
+    texto_libre = c2.text_input(
+        "Buscar texto (cargo, empresa o descripción)",
+        key="av_texto", placeholder="Ej: turno tarde")
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    areas_sel = c1.multiselect(
+        "Áreas", sorted(df["areas"].explode().dropna().unique()),
+        key="av_areas")
+    regiones_sel = c2.multiselect(
+        "Región", sorted(df["region"].dropna().unique()), key="av_regiones")
+    modalidades_sel = c3.multiselect(
+        "Modalidad", sorted(df["modalidad"].dropna().unique()),
+        key="av_modalidades")
+    contratos_sel = c4.multiselect(
+        "Contrato", sorted(df["tipo_contrato"].dropna().unique()),
+        key="av_contratos")
+    fuentes_sel = c5.multiselect(
+        "Fuente", sorted(df["site"].dropna().unique()), key="av_fuentes")
+
+    c1, c2 = st.columns(2)
+    incluir_duplicadas = c1.checkbox("Incluir duplicadas", False, key="av_dup")
+    incluir_ingles = c2.checkbox("Incluir con inglés excluyente", True,
+                                 key="av_ingles")
+
+    sel = df.copy()
+    if not incluir_duplicadas:
+        sel = sel[sel["duplicada"] != 1]
+    if not incluir_ingles:
+        sel = sel[sel["ingles_excluyente"] != 1]
+    sel = sel[sel["match"].between(match_min, match_max)]
+    if texto_libre.strip():
+        import re
+        from motor.texto import normalizar
+        t = normalizar(texto_libre)
+        campo = (sel["title"].fillna("").map(normalizar) + " "
+                 + sel["company"].fillna("").map(normalizar) + " "
+                 + sel["description"].fillna("").map(normalizar))
+        sel = sel[campo.str.contains(re.escape(t))]
+    if areas_sel:
+        objetivo = set(areas_sel)
+        sel = sel[sel["areas"].map(lambda a: bool(objetivo & set(a)))]
+    if regiones_sel:
+        sel = sel[sel["region"].isin(regiones_sel)]
+    if modalidades_sel:
+        sel = sel[sel["modalidad"].isin(modalidades_sel)]
+    if contratos_sel:
+        sel = sel[sel["tipo_contrato"].isin(contratos_sel)]
+    if fuentes_sel:
+        sel = sel[sel["site"].isin(fuentes_sel)]
+
+    st.write(f"{len(sel)} ofertas con estos filtros.")
+    st.dataframe(
+        sel[["title", "company", "region", "modalidad", "tipo_contrato",
+             "match", "site"]].sort_values("match", ascending=False),
+        use_container_width=True, key="av_tabla")
+
+
 def main():
     if "usuario_id" not in st.session_state:
         correo = pantalla_correo()
@@ -178,9 +254,11 @@ def main():
     if perfil is None:
         return
 
-    (t1,) = st.tabs(["🎯 Ofertas para ti"])
+    (t1, t2) = st.tabs(["🎯 Ofertas para ti", "🔬 Filtro avanzado"])
     with t1:
         tab_ofertas(perfil, usuario_id)
+    with t2:
+        tab_filtro_avanzado(perfil, usuario_id)
 
 
 if __name__ == "__main__":
