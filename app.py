@@ -5,6 +5,7 @@ Ejecutar: .venv\\Scripts\\python.exe -m streamlit run app.py
 """
 from datetime import datetime, timezone
 
+import plotly.express as px
 import streamlit as st
 
 import app_data
@@ -228,6 +229,58 @@ def tab_filtro_avanzado(perfil, usuario_id: str):
         use_container_width=True, key="av_tabla")
 
 
+def tab_tendencias(perfil, usuario_id: str):
+    crudas = _ofertas_crudas()
+    df = app_data.a_dataframe(crudas)
+    if df.empty:
+        st.info("Todavía no hay ofertas recolectadas.")
+        return
+    tendencias = app_data.tendencias_por_fecha(df)
+    if tendencias is None:
+        st.info("Todavía hay una sola fecha de captura — vuelve cuando "
+                "haya al menos dos corridas para ver una tendencia real.")
+        return
+    st.plotly_chart(
+        px.line(tendencias["areas"], x="scrape_date", y="ofertas",
+               color="area", title="Ofertas por área en el tiempo"),
+        use_container_width=True, key="td_areas")
+    top_habilidades = (tendencias["habilidades"].groupby("habilidad")["ofertas"]
+                       .sum().nlargest(10).index)
+    hab_top = tendencias["habilidades"][
+        tendencias["habilidades"]["habilidad"].isin(top_habilidades)]
+    st.plotly_chart(
+        px.line(hab_top, x="scrape_date", y="ofertas", color="habilidad",
+               title="Top 10 habilidades pedidas en el tiempo"),
+        use_container_width=True, key="td_habilidades")
+
+
+def tab_empresas(perfil, usuario_id: str):
+    crudas = _ofertas_crudas()
+    df = app_data.a_dataframe(crudas)
+    if df.empty:
+        st.info("Todavía no hay ofertas recolectadas.")
+        return
+    tabla = app_data.radar_empresas(df)
+    st.write(f"{len(tabla)} empresas con avisos publicados.")
+    st.dataframe(tabla, use_container_width=True, key="em_tabla")
+
+
+def tab_acerca(perfil, usuario_id: str):
+    crudas = _ofertas_crudas()
+    st.write(f"**Ofertas en la base:** {len(crudas)}")
+    if crudas:
+        ultima = max((o.get("scrape_date") or "" for o in crudas), default="")
+        st.write(f"**Última corrida con datos:** {ultima or 'sin registro'}")
+    st.write("**Fuentes:** Get on Board, Computrabajo, Trabajando.cl, "
+             "Laborum.cl.")
+    st.write("El puntaje de cada oferta se calcula al momento de cargar la "
+             "página, contra tu perfil — no se guarda en ningún lado ni se "
+             "comparte entre usuarios.")
+    st.caption("Mientras el ingreso sea solo por correo, evitá compartir "
+               "esta app con desconocidos: cualquiera que escriba tu "
+               "correo puede ver tu perfil y tus marcas.")
+
+
 def main():
     if "usuario_id" not in st.session_state:
         correo = pantalla_correo()
@@ -254,11 +307,19 @@ def main():
     if perfil is None:
         return
 
-    (t1, t2) = st.tabs(["🎯 Ofertas para ti", "🔬 Filtro avanzado"])
+    t1, t2, t3, t4, t5 = st.tabs(
+        ["🎯 Ofertas para ti", "🔬 Filtro avanzado", "📈 Tendencias",
+         "🏢 Empresas", "ℹ️ Acerca de los datos"])
     with t1:
         tab_ofertas(perfil, usuario_id)
     with t2:
         tab_filtro_avanzado(perfil, usuario_id)
+    with t3:
+        tab_tendencias(perfil, usuario_id)
+    with t4:
+        tab_empresas(perfil, usuario_id)
+    with t5:
+        tab_acerca(perfil, usuario_id)
 
 
 if __name__ == "__main__":
