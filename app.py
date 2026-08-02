@@ -49,7 +49,11 @@ def formulario_perfil(perfil_actual: Perfil | None) -> Perfil | None:
         anios = c1.number_input(
             "Años de experiencia", key="perfil_anios",
             min_value=0, max_value=50,
-            value=valores.anios_experiencia or 0)
+            # Explícito por `is None`, no `or 0`: con `or`, un 0 guardado
+            # coincide por casualidad con el default de "no especificado"
+            # y el bug quedaría invisible si ese default cambiara.
+            value=0 if valores.anios_experiencia is None
+                 else valores.anios_experiencia)
         region = c2.selectbox(
             "Región", ["(sin preferencia)"] + app_data.REGIONES_CHILE,
             key="perfil_region",
