@@ -1,0 +1,92 @@
+# -*- coding: utf-8 -*-
+import app_data
+import db
+from motor.puntaje import Aviso, Perfil
+
+
+def _oferta(**cambios):
+    base = dict(job_url="http://x/1", title="Cajero", company="Super X",
+                site="trabajando", scrape_date="2026-08-01",
+                description="Se busca cajero con experiencia",
+                habilidades="[]", areas='["Ventas y retail"]',
+                region="Metropolitana", modalidad="Presencial",
+                tipo_contrato="Indefinido", anios_experiencia_pedidos=None,
+                ingles_excluyente=0, duplicada=0, vigencia_estimada=None)
+    base.update(cambios)
+    return base
+
+
+def test_cargar_perfil_inexistente_da_none(tmp_path):
+    eng = db.engine(tmp_path / "a.db")
+    db.ensure_schema(eng)
+    assert app_data.cargar_perfil("ana@x.cl", db_path=tmp_path / "a.db") is None
+
+
+def test_guardar_y_cargar_perfil_hace_roundtrip(tmp_path):
+    perfil = Perfil(cargos_buscados=["cajero"], habilidades=["Excel"],
+                    anios_experiencia=2, region="Metropolitana",
+                    acepta_remoto=False, evitar=["plástico"])
+    app_data.guardar_perfil("ana@x.cl", perfil, "2026-08-03",
+                            db_path=tmp_path / "b.db")
+    cargado = app_data.cargar_perfil("ana@x.cl", db_path=tmp_path / "b.db")
+    assert cargado == perfil
+
+
+def test_guardar_perfil_no_pisa_creado_en_al_actualizar(tmp_path):
+    p1 = Perfil(cargos_buscados=["cajero"])
+    app_data.guardar_perfil("ana@x.cl", p1, "2026-08-01", db_path=tmp_path / "c.db")
+    p2 = Perfil(cargos_buscados=["guardia"])
+    app_data.guardar_perfil("ana@x.cl", p2, "2026-08-05", db_path=tmp_path / "c.db")
+    eng = db.engine(tmp_path / "c.db")
+    fila = db.cargar_usuario(eng, "ana@x.cl")
+    assert fila["creado_en"] == "2026-08-01"
+    assert app_data.cargar_perfil("ana@x.cl", db_path=tmp_path / "c.db") == p2
+
+
+def test_aviso_desde_oferta_mapea_los_campos():
+    oferta = _oferta(habilidades='["Excel", "Manejo de caja"]',
+                     anios_experiencia_pedidos=2, ingles_excluyente=1)
+    aviso = app_data.aviso_desde_oferta(oferta)
+    assert aviso.titulo == "Cajero"
+    assert aviso.texto == "Se busca cajero con experiencia"
+    assert aviso.habilidades == ["Excel", "Manejo de caja"]
+    assert aviso.region == "Metropolitana"
+    assert aviso.modalidad == "Presencial"
+    assert aviso.anios_pedidos == 2
+    assert aviso.ingles_excluyente is True
+
+
+def test_aviso_desde_oferta_sin_habilidades_no_crashea():
+    oferta = _oferta(habilidades=None)
+    aviso = app_data.aviso_desde_oferta(oferta)
+    assert aviso.habilidades == []
+
+
+def test_puntuar_ofertas_agrega_match_y_ordena():
+    ofertas = [
+        _oferta(job_url="http://x/1", title="Cajero"),  # calce perfecto
+        _oferta(job_url="http://x/2", title="Ingeniero de Procesos"),  # sin relación
+    ]
+    perfil = Perfil(cargos_buscados=["cajero"])
+    resultado = app_data.puntuar_ofertas(ofertas, perfil)
+    assert len(resultado) == 1  # el sin relación queda oculto (afinidad baja)
+    assert resultado[0]["job_url"] == "http://x/1"
+    assert resultado[0]["match"] == 100
+
+
+def test_puntuar_ofertas_respeta_evitar_del_perfil():
+    ofertas = [_oferta(job_url="http://x/1", title="Cajero",
+                       description="Fábrica de envases plásticos")]
+    perfil = Perfil(cargos_buscados=["cajero"], evitar=["plástico"])
+    assert app_data.puntuar_ofertas(ofertas, perfil) == []
+
+
+def test_puntuar_ofertas_de_un_usuario_no_afecta_a_otro():
+    ofertas = [_oferta(job_url="http://x/1", title="Cajero",
+                       description="Fábrica de envases plásticos")]
+    con_evitar = app_data.puntuar_ofertas(
+        ofertas, Perfil(cargos_buscados=["cajero"], evitar=["plástico"]))
+    sin_evitar = app_data.puntuar_ofertas(
+        ofertas, Perfil(cargos_buscados=["cajero"]))
+    assert con_evitar == []
+    assert len(sin_evitar) == 1
