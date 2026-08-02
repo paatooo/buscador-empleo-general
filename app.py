@@ -62,7 +62,7 @@ def formulario_perfil(perfil_actual: Perfil | None) -> Perfil | None:
             "Qué querés evitar (uno por línea, opcional)",
             key="perfil_evitar", value="\n".join(valores.evitar),
             placeholder="plástico\ncall center")
-        enviado = st.form_submit_button("Guardar perfil")
+        enviado = st.form_submit_button("Guardar perfil", key="perfil_guardar")
 
     if not enviado:
         return None
