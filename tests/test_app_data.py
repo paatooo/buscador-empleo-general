@@ -138,3 +138,73 @@ def test_es_seleccion_nueva_no_cruza_entre_tablas_distintas():
     app_data.es_seleccion_nueva(estado, "tabla1", "http://x/1")
     # la misma url, pero en OTRA tabla (key distinta): sigue siendo nueva
     assert app_data.es_seleccion_nueva(estado, "tabla2", "http://x/1") is True
+
+
+def test_a_dataframe_decodifica_habilidades_y_areas():
+    ofertas = [_oferta(habilidades='["Excel"]', areas='["Ventas y retail"]')]
+    df = app_data.a_dataframe(ofertas)
+    assert df.iloc[0]["habilidades"] == ["Excel"]
+    assert df.iloc[0]["areas"] == ["Ventas y retail"]
+
+
+def test_a_dataframe_con_lista_vacia_da_dataframe_vacio():
+    df = app_data.a_dataframe([])
+    assert len(df) == 0
+
+
+def test_conteo_areas_cuenta_por_area():
+    ofertas = [
+        _oferta(job_url="http://x/1", areas='["Ventas y retail"]'),
+        _oferta(job_url="http://x/2", areas='["Ventas y retail", "Administración"]'),
+    ]
+    conteo = app_data.conteo_areas(app_data.a_dataframe(ofertas))
+    assert conteo["Ventas y retail"] == 2
+    assert conteo["Administración"] == 1
+
+
+def test_conteo_habilidades_calcula_porcentaje():
+    ofertas = [
+        _oferta(job_url="http://x/1", habilidades='["Excel"]'),
+        _oferta(job_url="http://x/2", habilidades='[]'),
+    ]
+    tabla = app_data.conteo_habilidades(app_data.a_dataframe(ofertas))
+    fila = tabla[tabla["habilidad"] == "Excel"].iloc[0]
+    assert fila["ofertas"] == 1
+    assert fila["pct"] == 50.0
+
+
+def test_conteo_habilidades_sin_ninguna_da_tabla_vacia():
+    ofertas = [_oferta(job_url="http://x/1", habilidades="[]")]
+    tabla = app_data.conteo_habilidades(app_data.a_dataframe(ofertas))
+    assert len(tabla) == 0
+    assert list(tabla.columns) == ["habilidad", "ofertas", "pct"]
+
+
+def test_tendencias_por_fecha_none_con_una_sola_fecha():
+    ofertas = [_oferta(job_url="http://x/1", scrape_date="2026-08-01")]
+    assert app_data.tendencias_por_fecha(app_data.a_dataframe(ofertas)) is None
+
+
+def test_tendencias_por_fecha_con_varias_fechas():
+    ofertas = [
+        _oferta(job_url="http://x/1", scrape_date="2026-08-01",
+               habilidades='["Excel"]'),
+        _oferta(job_url="http://x/2", scrape_date="2026-08-02",
+               habilidades='["Excel"]'),
+    ]
+    resultado = app_data.tendencias_por_fecha(app_data.a_dataframe(ofertas))
+    assert resultado is not None
+    assert set(resultado["habilidades"]["scrape_date"]) == {"2026-08-01", "2026-08-02"}
+
+
+def test_radar_empresas_agrupa_por_empresa():
+    ofertas = [
+        _oferta(job_url="http://x/1", company="Super X",
+               habilidades='["Excel"]', areas='["Ventas y retail"]'),
+        _oferta(job_url="http://x/2", company="Super X",
+               habilidades='["Manejo de caja"]', areas='["Ventas y retail"]'),
+    ]
+    tabla = app_data.radar_empresas(app_data.a_dataframe(ofertas))
+    fila = tabla[tabla["empresa"] == "Super X"].iloc[0]
+    assert fila["ofertas"] == 2
+    assert "Excel" in fila["top_habilidades"]

@@ -3,6 +3,8 @@
 para poder probarlas con pytest sin levantar el runtime de la interfaz."""
 import json
 
+import pandas as pd
+
 import db
 from motor.puntaje import Aviso, Perfil, puntuar
 
@@ -109,3 +111,68 @@ def es_seleccion_nueva(estado_sesion: dict, key: str, valor: str) -> bool:
     es_nueva = estado_sesion.get(clave) != valor
     estado_sesion[clave] = valor
     return es_nueva
+
+
+def a_dataframe(ofertas: list[dict]) -> pd.DataFrame:
+    df = pd.DataFrame(ofertas)
+    if df.empty:
+        return df
+    df["habilidades"] = df["habilidades"].map(
+        lambda s: json.loads(s) if s else [])
+    df["areas"] = df["areas"].map(lambda s: json.loads(s) if s else [])
+    return df
+
+
+def conteo_areas(df: pd.DataFrame) -> pd.Series:
+    if df.empty:
+        return pd.Series(dtype="int64")
+    return df["areas"].explode().value_counts()
+
+
+_COLUMNAS_CONTEO_HABILIDADES = {
+    "habilidad": "object", "ofertas": "int64", "pct": "float64"}
+
+
+def conteo_habilidades(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        conteo = pd.Series(dtype="int64")
+    else:
+        conteo = df["habilidades"].explode().dropna().value_counts()
+    if conteo.empty:
+        return pd.DataFrame({c: pd.Series(dtype=t)
+                             for c, t in _COLUMNAS_CONTEO_HABILIDADES.items()})
+    out = conteo.rename_axis("habilidad").reset_index(name="ofertas")
+    out["pct"] = (100 * out["ofertas"] / max(1, len(df))).round(1)
+    return out
+
+
+def tendencias_por_fecha(df: pd.DataFrame):
+    """None si hay menos de 2 fechas de captura distintas — aún no hay
+    tendencia real que mostrar, solo una foto."""
+    if df.empty or df["scrape_date"].nunique() < 2:
+        return None
+    hab = (df.explode("habilidades").dropna(subset=["habilidades"])
+           .groupby(["scrape_date", "habilidades"]).size()
+           .rename("ofertas").reset_index()
+           .rename(columns={"habilidades": "habilidad"}))
+    areas = (df.explode("areas").dropna(subset=["areas"])
+             .groupby(["scrape_date", "areas"]).size()
+             .rename("ofertas").reset_index()
+             .rename(columns={"areas": "area"}))
+    return {"habilidades": hab, "areas": areas}
+
+
+def radar_empresas(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["empresa", "ofertas", "areas", "top_habilidades"])
+    g = df.groupby("company")
+    out = pd.DataFrame({
+        "ofertas": g.size(),
+        "areas": g["areas"].apply(
+            lambda s: ", ".join(sorted({a for row in s for a in row}))),
+        "top_habilidades": g["habilidades"].apply(
+            lambda s: ", ".join(pd.Series(
+                [h for row in s for h in row]).value_counts().head(5).index)),
+    })
+    return (out.sort_values("ofertas", ascending=False)
+            .rename_axis("empresa").reset_index())
