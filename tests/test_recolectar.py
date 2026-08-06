@@ -209,3 +209,72 @@ def test_run_actualiza_last_seen_de_ofertas_que_siguen_vigentes(tmp_path, monkey
     # clavado en la fecha de la primera inserción.
     assert last_seen_2 == "2026-08-05"
     assert last_seen_2 != last_seen_1
+
+
+def _falla(*a, **k):
+    return ([], set(), "boom: la red se cayó")
+
+
+def test_run_no_registra_la_corrida_de_un_termino_si_fallaron_todas_las_fuentes(tmp_path):
+    """Una corrida donde ninguna fuente respondió no es información sobre
+    el término: si se registrara, `terminos_pendientes` lo excluiría por
+    24 horas y después lo trataría como estéril. Una caída de red dejaría
+    la recolección muerta un día y degradaría el catálogo entero."""
+    eng = db.engine(tmp_path / "rf1.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-08-01T00:00:00")
+
+    with patch("fuente_getonbrd.fetch_all", _falla), \
+         patch("fuente_computrabajo.fetch_all", _falla), \
+         patch("fuente_trabajando.fetch_all", _falla), \
+         patch("fuente_laborum.fetch_all", _falla):
+        resumen = recolectar.run(eng)
+
+    fila = db.consultar(eng, "SELECT ultima_corrida, ofertas_ultimas"
+                             " FROM terminos_busqueda WHERE termino = 'cajero'")[0]
+    assert fila[0] is None, "no debe quedar marcado como corrido"
+    assert resumen["terminos_fallidos"] == 1
+    assert resumen["terminos_corridos"] == 0
+    assert db.terminos_pendientes(eng) == ["cajero"], "debe poder reintentarse"
+
+
+def test_run_si_registra_un_termino_esteril_cuando_las_fuentes_si_respondieron(tmp_path):
+    """Cero ofertas SIN errores sí es información: el término es estéril y
+    corresponde despriorizarlo. Es justo lo contrario del caso de arriba."""
+    eng = db.engine(tmp_path / "rf2.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-08-01T00:00:00")
+
+    vacio = ([], set(), None)
+    with patch("fuente_getonbrd.fetch_all", return_value=vacio), \
+         patch("fuente_computrabajo.fetch_all", return_value=vacio), \
+         patch("fuente_trabajando.fetch_all", return_value=vacio), \
+         patch("fuente_laborum.fetch_all", return_value=vacio):
+        resumen = recolectar.run(eng)
+
+    fila = db.consultar(eng, "SELECT ultima_corrida, ofertas_ultimas"
+                             " FROM terminos_busqueda WHERE termino = 'cajero'")[0]
+    assert fila[0] is not None
+    assert fila[1] == 0
+    assert resumen["terminos_corridos"] == 1
+    assert resumen["terminos_fallidos"] == 0
+
+
+def test_run_registra_el_termino_si_al_menos_una_fuente_respondio(tmp_path):
+    eng = db.engine(tmp_path / "rf3.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-08-01T00:00:00")
+
+    with patch("fuente_getonbrd.fetch_all",
+               return_value=([_fila_falsa("http://gb/9", "cajero")],
+                             {"http://gb/9"}, None)), \
+         patch("fuente_computrabajo.fetch_all", _falla), \
+         patch("fuente_trabajando.fetch_all", _falla), \
+         patch("fuente_laborum.fetch_all", _falla):
+        resumen = recolectar.run(eng)
+
+    fila = db.consultar(eng, "SELECT ultima_corrida, ofertas_ultimas"
+                             " FROM terminos_busqueda WHERE termino = 'cajero'")[0]
+    assert fila[0] is not None
+    assert resumen["terminos_corridos"] == 1
+    assert resumen["terminos_fallidos"] == 0

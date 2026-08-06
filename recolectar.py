@@ -47,6 +47,7 @@ def run(eng, presupuesto_segundos: int = PRESUPUESTO_SEGUNDOS_DEFECTO,
     terminos = db.terminos_pendientes(eng)
     inicio = time.monotonic()
     terminos_corridos = 0
+    terminos_fallidos = 0
     ofertas_nuevas = 0
     vigentes_totales = set()
     conocidas = {f["job_url"] for f in db.cargar_ofertas(eng)}
@@ -56,6 +57,7 @@ def run(eng, presupuesto_segundos: int = PRESUPUESTO_SEGUNDOS_DEFECTO,
             break
 
         total_termino = 0
+        alguna_respondio = False
         for nombre_fuente, modulo in FUENTES:
             try:
                 filas, vigentes, error = modulo.fetch_all(
@@ -80,15 +82,30 @@ def run(eng, presupuesto_segundos: int = PRESUPUESTO_SEGUNDOS_DEFECTO,
                 conocidas |= {f["job_url"] for f in filas}
             if error:
                 print(f"[ERROR] {nombre_fuente} '{termino}': {error}")
+            else:
+                alguna_respondio = True
 
-        db.registrar_corrida_termino(eng, termino, total_termino, ahora_iso)
-        terminos_corridos += 1
+        # Un término donde NINGUNA fuente respondió no aporta información
+        # sobre el término: registrarlo lo excluiría de
+        # `db.terminos_pendientes` por 24 horas y después lo trataría como
+        # estéril (`ofertas_ultimas == 0`), que es la despriorización
+        # permanente. Una caída de red, un bloqueo de los portales o un
+        # certificado que no valida dejarían así la recolección muerta un
+        # día y degradarían el catálogo entero de una sola pasada. Cero
+        # ofertas SIN errores es otra cosa —eso sí es información— y se
+        # registra normalmente.
+        if alguna_respondio:
+            db.registrar_corrida_termino(eng, termino, total_termino, ahora_iso)
+            terminos_corridos += 1
+        else:
+            terminos_fallidos += 1
 
     db.actualizar_last_seen(eng, vigentes_totales, hoy)
     resumen_analisis = analizar.run(eng)
 
     return {
         "terminos_corridos": terminos_corridos,
+        "terminos_fallidos": terminos_fallidos,
         "ofertas_nuevas": ofertas_nuevas,
         "analizadas": resumen_analisis["analizadas"],
     }
@@ -98,5 +115,6 @@ if __name__ == "__main__":
     eng = db.engine()
     resumen = run(eng)
     print(f"Términos corridos: {resumen['terminos_corridos']} | "
+          f"Sin respuesta de ninguna fuente: {resumen['terminos_fallidos']} | "
           f"Ofertas nuevas: {resumen['ofertas_nuevas']} | "
           f"Analizadas: {resumen['analizadas']}")
