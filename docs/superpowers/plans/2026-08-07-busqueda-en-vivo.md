@@ -3,8 +3,8 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Cuando un perfil recién guardado no calza con ninguna oferta ya
-recolectada, scrapear los cargos de ese perfil en el momento (tope de 30
-segundos, resultados parciales) en vez de dejar la app vacía hasta la
+recolectada, scrapear los cargos de ese perfil en el momento (tope de
+tiempo, resultados parciales) en vez de dejar la app vacía hasta la
 próxima corrida programada.
 
 **Architecture:** Un módulo nuevo, `buscar_en_vivo.py`, con la misma
@@ -16,7 +16,7 @@ tal cual, y suma dos piezas nuevas y pequeñas: `db.termino_reciente`
 (encapsula el chequeo de 24h que ya usa `terminos_pendientes`, sin
 exponer su constante privada a otro módulo) y `analizar.run_urls`
 (análisis acotado a un set de URLs, para no reprocesar la tabla completa
-dentro del presupuesto de 30s). `app.py` solo invoca `buscar_en_vivo.buscar`
+dentro del presupuesto de tiempo). `app.py` solo invoca `buscar_en_vivo.buscar`
 desde `formulario_perfil` con una barra de progreso.
 
 **Tech Stack:** Nada nuevo — mismas dependencias que ya tiene el
@@ -29,7 +29,8 @@ progreso). pytest con `unittest.mock.patch` para todo lo testeable;
 - **El match nunca se guarda** — igual que siempre, `puntuar_ofertas` se
   sigue calculando al vuelo; la búsqueda en vivo solo agrega ofertas y su
   análisis genérico, nunca un puntaje.
-- **Presupuesto de 30 segundos total**, no por cargo ni por fuente — con
+- **Presupuesto de tiempo total (240 segundos, medido — ver "Hallazgos"
+  al final)**, no por cargo ni por fuente — con
   varios cargos sin cubrir, cada uno recibe menos tiempo, nunca se
   extiende el total.
 - **Orden de fuentes por velocidad esperada**: Get on Board (API) →
@@ -444,7 +445,7 @@ antes, para que los mocks de los tests tengan efecto).
   `fuente_computrabajo.fetch_all` (misma firma en las cuatro:
   `fetch_all(terminos: list[str], excluir_urls=None) -> tuple[list[dict], set, str | None]`)
 - Produces:
-  - `buscar(eng, cargos: list[str], presupuesto_segundos: int = 30, ahora: str | None = None, on_progreso: callable | None = None) -> dict`
+  - `buscar(eng, cargos: list[str], presupuesto_segundos: int = 240, ahora: str | None = None, on_progreso: callable | None = None) -> dict`
     — devuelve `{"buscados": list[str], "reutilizados": list[str],
     "en_cola": list[str], "ofertas_nuevas": dict[str, int], "agotado": bool}`
   - `MAX_SIMULTANEAS = 3`
@@ -709,12 +710,12 @@ import fuente_getonbrd
 import fuente_laborum
 import fuente_trabajando
 
-PRESUPUESTO_SEGUNDOS_DEFECTO = 30
+PRESUPUESTO_SEGUNDOS_DEFECTO = 240
 
 MAX_SIMULTANEAS = 3
 
 # Orden de velocidad esperada, NO el orden de recolectar.py: acá interesa
-# maximizar lo que llega antes del corte de 30s, así que la fuente más
+# maximizar lo que llega antes del corte de tiempo, así que la fuente más
 # lenta (computrabajo, HTML paginado) va al final — la primera en
 # quedarse sin tiempo si hay que cortar. Se guardan los módulos, no
 # `modulo.fetch_all` ya resuelto, por la misma razón que en
@@ -771,6 +772,7 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
     ofertas_nuevas = {}
     urls_nuevas_totales = []
     conocidas = {f["job_url"] for f in db.cargar_ofertas(eng)}
+    vigentes_totales = set()
     agotado = False
 
     for i, cargo in enumerate(cargos):
@@ -787,10 +789,13 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
 
         total_cargo = 0
         alguna_respondio = False
+        cortado_por_presupuesto = False
         urls_nuevas_cargo = []
+        ofertas_insertadas_cargo = 0
         for nombre_fuente, modulo in FUENTES:
             if time.monotonic() - inicio > presupuesto_segundos:
                 agotado = True
+                cortado_por_presupuesto = True
                 break
             try:
                 filas, vigentes, error = modulo.fetch_all(
@@ -798,6 +803,7 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
             except Exception as e:
                 filas, vigentes, error = [], set(), str(e)[:300]
             vigentes = vigentes or set()
+            vigentes_totales |= vigentes
             total_cargo += len(vigentes)
             if filas:
                 for f in filas:
@@ -806,7 +812,8 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
                     f.setdefault("search_term", cargo)
                 columnas = [c for c in COLUMNAS_OFERTA if c in filas[0]]
                 try:
-                    db.upsert_ofertas(eng, filas, columnas)
+                    ofertas_insertadas_cargo += db.upsert_ofertas(
+                        eng, filas, columnas)
                 except Exception as e:
                     print(f"[ERROR] guardando ofertas de {nombre_fuente}"
                          f" '{cargo}': {e}")
@@ -821,15 +828,34 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
         # Mismo criterio que recolectar.py (commit 8203005): una corrida
         # donde ninguna fuente respondió no es información sobre el
         # cargo, es información sobre la red — no se registra, para que
-        # pueda reintentarse.
-        if alguna_respondio:
+        # pueda reintentarse. Además, si el presupuesto cortó el bucle de
+        # fuentes a mitad de camino, tampoco se registra como corrida: el
+        # cargo solo se probó parcialmente (p. ej. 2 de 4 fuentes), así
+        # que marcarlo como "corrido" lo sacaría de rotación 24h y podría
+        # despriorizarlo como estéril si lo poco que se probó no encontró
+        # nada.
+        if alguna_respondio and not cortado_por_presupuesto:
             db.registrar_corrida_termino(eng, cargo, total_cargo, ahora)
-        buscados.append(cargo)
-        ofertas_nuevas[cargo] = len(urls_nuevas_cargo)
+            buscados.append(cargo)
+        else:
+            en_cola.append(cargo)
+        # Fuera del if/else: un cargo cortado a mitad de camino puede
+        # haber insertado ofertas reales antes del corte (p. ej. getonbrd
+        # alcanzó a responder, laborum no) — sin esto quedaba sin clave en
+        # ofertas_nuevas, y la app mostraba "no encontramos nada" mientras
+        # esas ofertas ya estaban visibles (la caché se limpia siempre).
+        ofertas_nuevas[cargo] = ofertas_insertadas_cargo
         urls_nuevas_totales.extend(urls_nuevas_cargo)
         if on_progreso:
             on_progreso(i + 1, len(cargos), cargo)
 
+    # vigentes_totales refresca last_seen de TODA URL confirmada vigente
+    # hoy, no solo las nuevas — mismo patrón que recolectar.py, y en el
+    # mismo orden (antes de analizar). Sin esto, ultima_corrida =
+    # max(last_seen) sube por lo recién insertado sin que lo viejo se
+    # refresque, y ofertas que la búsqueda en vivo acaba de confirmar
+    # vigentes se muestran como "probablemente cerradas".
+    db.actualizar_last_seen(eng, vigentes_totales, hoy)
     if urls_nuevas_totales:
         analizar.run_urls(eng, urls_nuevas_totales)
 
@@ -844,7 +870,10 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
 .venv\Scripts\python.exe -m pytest tests/test_buscar_en_vivo.py -v
 ```
 
-Esperado: todas pasan (11 pruebas)
+Esperado: todas pasan (10 pruebas iniciales; terminaron siendo 12 tras
+sumar `test_buscar_refresca_last_seen_de_ofertas_confirmadas_vigentes` y
+`test_buscar_reporta_lo_insertado_aunque_se_corte_por_presupuesto` en la
+revisión final de rama — ver "Hallazgos" al final)
 
 - [ ] **Step 5: Correr la suite completa**
 
@@ -899,7 +928,7 @@ orden no importa mientras esté al nivel de módulo):
 ```python
 def _buscar_en_vivo_con_progreso(cargos: list[str]) -> None:
     """Ningún cargo del perfil recién guardado calza con nada — busca en
-    vivo contra las cuatro fuentes (tope 30s, resultados parciales) en
+    vivo contra las cuatro fuentes (tope de tiempo, resultados parciales) en
     vez de dejar a la persona con la app vacía hasta la corrida
     programada de mañana."""
     import buscar_en_vivo
@@ -916,8 +945,22 @@ def _buscar_en_vivo_con_progreso(cargos: list[str]) -> None:
         barra.progress(indice / total, text=f"Buscando «{cargo}»"
                        f" ({indice}/{total})...")
 
-    eng = db.engine()
-    resumen = buscar_en_vivo.buscar(eng, cargos, on_progreso=avance)
+    try:
+        eng = db.engine()
+        resumen = buscar_en_vivo.buscar(eng, cargos, on_progreso=avance)
+    except Exception as e:
+        # El perfil ya se guardó (ver `st.success` más arriba) antes de
+        # llegar acá — una falla transitoria a mitad de una búsqueda que
+        # ahora puede tomar varios minutos (ver PRESUPUESTO_SEGUNDOS_DEFECTO
+        # en buscar_en_vivo.py) no debe dejar a la persona con un
+        # traceback crudo por algo que de todos modos ya funcionó.
+        barra.empty()
+        print(f"[ERROR] busqueda en vivo: {e}")
+        st.warning("No pudimos completar la búsqueda en vivo — probá de "
+                  "nuevo más tarde, o esperá a la próxima corrida "
+                  "programada.")
+        _ofertas_crudas.clear()
+        return
     barra.empty()
 
     # Limpiar siempre, no solo cuando ofertas_nuevas trae algo: en un caso
@@ -966,7 +1009,7 @@ máquina):
 - Guardar un perfil con un cargo real pero deliberadamente raro y no
   cubierto (ej. "operador de grúa horquilla" o cualquier cargo que no
   esté entre los 26 sembrados) dispara la barra de progreso, corre hasta
-  30 segundos como máximo, y termina mostrando las pestañas — con
+  unos minutos como máximo, y termina mostrando las pestañas — con
   ofertas si encontró algo, con el mensaje honesto si no.
 - Si encontró algo: entrar a "Ofertas para ti" muestra las ofertas
   nuevas sin tener que recargar la página ni esperar (confirma que la
@@ -1008,13 +1051,93 @@ en las anteriores:
 - Confirmar con `AppTest` que las cinco pestañas siguen coexistiendo sin
   `DuplicateElementId` con la barra de progreso en el medio del flujo.
 
+## Hallazgos de la revisión final de rama (2026-08-07)
+
+Las cuatro tareas pasaron su revisión individual sin observaciones
+(Tarea 3 con una ronda de fix por un hallazgo plan-mandated, ya resuelto
+con el usuario). La revisión de toda la rama —que en los tres planes
+anteriores encontró los bugs de verdad— encontró un Crítico, dos
+Importantes y un Menor, todos en el seam entre `buscar_en_vivo.py` y el
+código ya mergeado (`recolectar.py`, `analizar.py`, `db.py`, `app.py`).
+Los bloques de código de arriba ya están corregidos; esto queda como
+registro de por qué son así.
+
+**Hallazgo 1 (crítico): un cargo cortado por el presupuesto de tiempo a
+mitad del bucle de fuentes se registraba como corrida completa.** El
+chequeo de presupuesto *dentro* de un cargo (antes de cada una de las 4
+fuentes) es un lugar distinto del chequeo *entre* cargos, y solo este
+último estaba protegido: si el bucle de fuentes se cortaba a mitad de
+camino (algunas fuentes ya habían respondido), `db.registrar_corrida_termino`
+se llamaba igual. Eso excluía el cargo de `db.terminos_pendientes` por
+24h, y si lo poco que se probó no encontró nada, lo despriorizaba como
+estéril con datos incompletos — mismo bug del commit `8203005` de
+`recolectar.py`, reintroducido por otra puerta. Arreglado con un flag
+`cortado_por_presupuesto` que, junto con `alguna_respondio`, decide si el
+cargo se registra como corrido o queda en `en_cola`. Lo que sí se alcanzó
+a encontrar antes del corte se guarda y analiza igual — solo la marca de
+"corrida completa" queda pendiente.
+
+**Hallazgo 2 (importante): `buscar_en_vivo.py` nunca llamaba
+`db.actualizar_last_seen`.** Cada `fetch_all` devuelve en `vigentes`
+todas las URLs confirmadas publicadas hoy, no solo las nuevas —
+exactamente el dato que `recolectar.py` usa para refrescar `last_seen`.
+Al descartarlo, ofertas que la búsqueda en vivo acababa de confirmar
+vigentes terminaban mostrándose como "probablemente cerradas", porque
+`analizar.py` calcula `ultima_corrida = max(last_seen)` y las ofertas
+recién insertadas subían ese máximo sin que las viejas se refrescaran.
+Es el bug de `last_seen` que el proyecto ya arregló una vez en el plan
+de Recolección, reintroducido acá. Arreglado acumulando `vigentes_totales`
+a lo largo de toda la llamada y llamando `db.actualizar_last_seen` antes
+de `analizar.run_urls`, mismo orden que `recolectar.py`.
+
+**Hallazgo 3 (decisión de producto, no bug): el presupuesto de 30
+segundos era inalcanzable.** Medido, no adivinado: las cuatro fuentes
+heredan pisos de paginación/espera pensados para el lote de 45 minutos
+de `recolectar.py`, que en la práctica hacen que una búsqueda real tome
+entre 60 y 200+ segundos — confirmado con una corrida de producción real
+de esta misma recolección (~240s para un solo término). El usuario
+decidió subir el número a 240s en vez de restringir a fuentes rápidas o
+construir un presupuesto interno por fuente (ambos considerados, ambos
+fuera de alcance por ahora).
+
+**Hallazgo 4 (importante): una excepción durante `buscar_en_vivo.buscar`
+tumbaba la página después de que el perfil ya se había guardado.** La
+mayoría de las llamadas internas de `buscar()` no estaban protegidas
+(solo `fetch_all` y `db.upsert_ofertas` tenían su propio try/except). Con
+el presupuesto ahora en minutos en vez de segundos, hay más tiempo real
+para que algo transitorio falle a mitad de camino. Arreglado envolviendo
+la llamada en `app.py` en `try/except Exception`, con un aviso honesto y
+la caché limpiada igual por si algo parcial se guardó antes de la falla.
+
+**Hallazgo 5 (menor, encontrado en la re-revisión tras el Hallazgo 1):
+el arreglo del Hallazgo 1 dejó `ofertas_nuevas[cargo]` sin asignar para
+un cargo cortado por presupuesto**, aunque hubiera insertado ofertas
+reales antes del corte — la app decía "no encontramos nada" mientras esas
+ofertas ya estaban visibles (la caché se limpia siempre). Arreglado
+moviendo la asignación fuera del `if`/`else`, junto a
+`urls_nuevas_totales.extend(...)` que ya vivía ahí.
+
+La suite quedó en **230 pruebas** (207 heredadas de Recolección + 23 de
+esta rama). Verificado con ejecución real en cada ronda: mocks de las
+cuatro fuentes con `unittest.mock.patch` (mismo patrón que
+`test_recolectar.py`), threads reales con `threading.Barrier` para
+probar la concurrencia sin mocks, y `AppTest` para el enganche completo
+en `app.py` (alta, edición, cinco pestañas, manejo de excepción).
+
 ## Pendiente de calibración
 
-- El tope de 3 búsquedas simultáneas y el presupuesto de 30s son los
-  números del spec, sin datos reales de cuánta demanda concurrente tiene
-  la app. Revisar cuando haya usuarios reales.
+- El tope de 3 búsquedas simultáneas y el presupuesto de 240s son
+  números medidos contra el comportamiento real de las fuentes, pero sin
+  datos de cuánta demanda concurrente tendrá la app con usuarios reales.
+  Revisar cuando los haya.
 - `run_urls` sigue leyendo la tabla `ofertas` completa para construir las
   claves de deduplicación (aunque solo escribe análisis para las URLs
   pedidas) — con volumen mucho mayor al actual (miles de ofertas), esa
   lectura podría volverse el costo dominante dentro del presupuesto de
-  30s. No es un problema con el volumen de hoy (~3.500 filas).
+  240s. No es un problema con el volumen de hoy (~3.500 filas).
+- `ofertas_nuevas`, `en_cola`, `reutilizados` y `agotado` se calculan
+  pero `app.py` solo consume `ofertas_nuevas` en agregado (para decidir
+  si mostrar el mensaje de "seguimos buscando"). El spec pedía distinguir
+  "agregado a la cola" de "buscado ahora" en la comunicación a la
+  persona — no implementado todavía, la app hoy no distingue por qué un
+  cargo no trajo nada.

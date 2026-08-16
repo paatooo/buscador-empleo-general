@@ -4,11 +4,23 @@
 
 Cuando alguien guarda un perfil cuyos cargos no calzan con nada de lo ya
 recolectado, la app no lo deja mirando una pantalla vacía hasta la próxima
-corrida programada: scrapea esos cargos en el momento (tope 30 segundos,
+corrida programada: scrapea esos cargos en el momento (tope de tiempo,
 resultados parciales) y muestra lo que encuentre, dejando claro que es una
 primera pasada y que mañana habrá más. Ya descrito en la sección 4 del
 [spec principal](2026-07-29-buscador-empleo-personalizado-design.md); este
 documento fija las decisiones de diseño que ese spec dejaba abiertas.
+
+> **Corrección post-implementación (revisión final de rama, 2026-08-07):**
+> el spec original pedía un tope de 30 segundos. La implementación real
+> demostró que es inalcanzable: las cuatro fuentes heredan pisos de
+> paginación/espera pensados para el lote de 45 minutos de
+> `recolectar.py`, que en la práctica hacen que una búsqueda tome entre
+> 60 y 200+ segundos — confirmado además con una corrida de producción
+> real de esta misma recolección (~240s para un solo término). El
+> presupuesto quedó en **240 segundos**, medido, no adivinado. Ver
+> `buscar_en_vivo.py` (`PRESUPUESTO_SEGUNDOS_DEFECTO`) para el detalle.
+> El resto de este documento se corrigió para reflejar "presupuesto de
+> tiempo" en vez del número original.
 
 ## Relación con lo ya construido
 
@@ -33,7 +45,7 @@ lista esté completamente descubierto; ese otro cargo queda igual en
 `agregar_termino`.
 
 Se busca por **todos** los cargos del perfil a la vez (no solo el primero),
-repartiendo el presupuesto de 30 segundos entre ellos — ver sección 3.
+repartiendo el presupuesto de tiempo entre ellos — ver sección 3.
 
 ### 2. Nuevo módulo `buscar_en_vivo.py`
 
@@ -45,7 +57,7 @@ Misma separación que el resto del proyecto: funciones puras sobre
 
 **Produce:**
 
-- `buscar(eng, cargos: list[str], presupuesto_segundos: int = 30) -> dict`
+- `buscar(eng, cargos: list[str], presupuesto_segundos: int = 240) -> dict`
   — orquesta todo: reutilización, scraping con presupuesto, persistencia,
   análisis acotado, registro de la corrida. Devuelve un resumen (cargos
   buscados, cargos reutilizados de una corrida reciente, ofertas nuevas
@@ -71,7 +83,7 @@ si fueran a esperar la corrida programada, y devuelve un resumen que dice
 "agregado a la cola" en vez de "buscado ahora". El perfil se guarda de
 todas formas — este guardarraíl nunca bloquea el guardado.
 
-### 3. Orden de fuentes y presupuesto de 30 segundos
+### 3. Orden de fuentes y presupuesto de tiempo
 
 Se corren en orden de velocidad esperada: Get on Board (API, responde en
 segundos) → Trabajando → Laborum (ambas por sitemap) → Computrabajo (HTML
@@ -95,7 +107,28 @@ existía, `db.registrar_corrida_termino(eng, cargo, total_encontrado,
 ahora)` al terminar (mismo criterio que el fix de
 `recolectar.py`/commit `8203005`: solo se registra la corrida de un cargo
 si al menos una fuente respondió sin error — si las cuatro fallan, el
-cargo queda pendiente para reintentar, no se descarta).
+cargo queda pendiente para reintentar, no se descarta). **El mismo
+criterio aplica si el presupuesto de tiempo corta el bucle de fuentes a
+mitad de camino para un cargo** (algunas fuentes respondieron, otras ni
+se intentaron): tampoco se registra la corrida, aunque las que sí
+alcanzaron a responder hayan encontrado algo — lo encontrado se guarda y
+analiza igual, solo la marca de "corrida completa" queda pendiente.
+(Encontrado en la revisión final de rama: el chequeo de presupuesto
+*dentro* de un cargo es un lugar distinto del chequeo *entre* cargos, y
+la primera implementación solo protegía este último.)
+
+**Refrescar `last_seen`.** Cada `fetch_all` devuelve en `vigentes` todas
+las URLs confirmadas publicadas hoy, no solo las nuevas — mismo dato que
+usa `recolectar.py` para llamar `db.actualizar_last_seen`. `buscar()`
+debe acumular ese conjunto a lo largo de toda la llamada y llamar
+`db.actualizar_last_seen(eng, vigentes_totales, hoy)` antes de
+`analizar.run_urls` (mismo orden que `recolectar.py`). Sin esto, la
+`ultima_corrida = max(last_seen)` que calcula `analizar.py` sube por las
+ofertas recién insertadas sin que las ofertas viejas confirmadas vigentes
+se refresquen — y terminan mostrándose como "probablemente cerradas".
+(Encontrado en la revisión final de rama del 2026-08-07: la primera
+implementación de `buscar_en_vivo.py` omitía este paso por completo, ya
+corregido.)
 
 **`analizar.py` suma `run_urls(eng, urls: list[str]) -> dict`** — mismo
 cálculo genérico que `run()` (habilidades, áreas, región, modalidad, tipo
@@ -126,7 +159,7 @@ que ya existe, no un mecanismo nuevo.
 
 ### 6. Caso vacío
 
-Si después del presupuesto de 30 segundos (o de reutilizar una corrida
+Si después del presupuesto de tiempo (o de reutilizar una corrida
 reciente que tampoco encontró nada) `puntuar_ofertas` sigue vacío para
 algún cargo, se muestra el mensaje honesto del spec principal ("todavía no
 tenemos ofertas de X, las seguimos buscando") — nunca una lista con match
@@ -137,9 +170,14 @@ bajo para simular resultados.
 `_ofertas_crudas()` está cacheada con `@st.cache_data(ttl=300)`. Si
 `buscar_en_vivo.buscar` encuentra algo y no se invalida esa caché, la
 persona vería "no encontramos nada" hasta que expire (hasta 5 minutos)
-pese a que ya se guardó lo que buscaba. Después de una llamada a
-`buscar()` con resultados nuevos, `app.py` llama
-`_ofertas_crudas.clear()` antes de renderizar las pestañas.
+pese a que ya se guardó lo que buscaba. `app.py` limpia la caché
+**siempre** tras una llamada a `buscar()`, no solo cuando
+`ofertas_nuevas` trae algo — más barato limpiar de más (una lectura
+extra a la base) que arriesgar una caché desactualizada por un caso
+extremo (una fuente que devuelve filas junto con un error, donde una
+oferta puede insertarse sin que el cargo quede reflejado en
+`ofertas_nuevas`). Corregido durante la revisión final de rama; la
+primera implementación limpiaba solo condicionalmente.
 
 ### 8. Dónde se engancha en `app.py`
 
@@ -147,9 +185,18 @@ Dentro de `formulario_perfil`, después de `guardar_perfil` y antes de
 devolver el perfil nuevo: si `app_data.puntuar_ofertas` da vacío para el
 perfil recién guardado, se llama `buscar_en_vivo.buscar` con una barra de
 progreso (`st.progress`, actualizada a medida que cada fuente termina) y
-un texto explicando que es una primera pasada. Al terminar, si hubo
-resultados nuevos, se limpia la caché (sección 7) y se sigue el flujo
-normal hacia las pestañas.
+un texto explicando que es una primera pasada. Al terminar, se limpia la
+caché (sección 7) y se sigue el flujo normal hacia las pestañas.
+
+**Manejo de excepciones.** La llamada a `buscar_en_vivo.buscar` va
+envuelta en `try/except Exception`: el perfil ya se guardó antes de
+llegar a este punto (con el presupuesto en unos minutos, hay más tiempo
+para que algo transitorio falle a mitad de camino), así que una
+excepción acá no debe dejar a la persona con un traceback crudo por algo
+que de todos modos ya funcionó — se muestra un aviso honesto y se limpia
+la caché igual, por si algo parcial alcanzó a guardarse antes de la
+falla. (Encontrado en la revisión final de rama: la primera
+implementación no protegía esta llamada.)
 
 ## Pruebas
 
