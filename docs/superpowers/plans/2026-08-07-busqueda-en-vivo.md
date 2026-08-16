@@ -920,9 +920,14 @@ def _buscar_en_vivo_con_progreso(cargos: list[str]) -> None:
     resumen = buscar_en_vivo.buscar(eng, cargos, on_progreso=avance)
     barra.empty()
 
-    if any(resumen["ofertas_nuevas"].values()):
-        _ofertas_crudas.clear()
-    else:
+    # Limpiar siempre, no solo cuando ofertas_nuevas trae algo: en un caso
+    # extremo (una fuente devuelve filas junto con un error, así que
+    # alguna_respondio queda en False) una oferta puede haberse insertado
+    # sin que el cargo tenga clave en ofertas_nuevas — más barato limpiar
+    # de más (una lectura extra a la base) que arriesgar una caché
+    # desactualizada.
+    _ofertas_crudas.clear()
+    if not any(resumen["ofertas_nuevas"].values()):
         st.info("Todavía no encontramos ofertas publicadas para lo que "
                 "buscás — seguimos intentando en las próximas corridas.")
 ```
