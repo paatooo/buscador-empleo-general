@@ -274,6 +274,22 @@ def terminos_pendientes(eng: Engine, limite: int | None = None,
     return terminos[:limite] if limite is not None else terminos
 
 
+def termino_reciente(eng: Engine, termino: str, ahora: str) -> bool:
+    """True si `termino` se corrió (en vivo o programada) hace menos de
+    `_HORAS_MIN_ENTRE_CORRIDAS` horas. Mismo umbral y misma comparación
+    lexicográfica de cadenas ISO que ya usa `terminos_pendientes` — un
+    término nunca corrido da False."""
+    from datetime import datetime, timedelta
+
+    fila = consultar(eng, "SELECT ultima_corrida FROM terminos_busqueda"
+                          " WHERE termino = :t", {"t": termino})
+    if not fila or fila[0][0] is None:
+        return False
+    corte = (datetime.fromisoformat(ahora)
+             - timedelta(hours=_HORAS_MIN_ENTRE_CORRIDAS)).isoformat()
+    return fila[0][0] >= corte
+
+
 def upsert_ofertas(eng: Engine, filas: list[dict], columnas: list[str]) -> int:
     """Inserta ofertas nuevas ignorando las que ya existan (mismo
     job_url), de forma atómica. Devuelve cuántas filas quedaron realmente

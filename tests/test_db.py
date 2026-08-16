@@ -208,6 +208,35 @@ def test_terminos_pendientes_despriorizar_esteriles(tmp_path):
     assert pendientes.index("con_resultados") < pendientes.index("esteril")
 
 
+def test_termino_reciente_da_false_si_nunca_se_corrio(tmp_path):
+    eng = db.engine(tmp_path / "tr1.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-07-01T00:00:00")
+    assert db.termino_reciente(eng, "cajero", "2026-08-01T00:00:00") is False
+
+
+def test_termino_reciente_da_true_dentro_de_24_horas(tmp_path):
+    eng = db.engine(tmp_path / "tr2.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-07-01T00:00:00")
+    db.registrar_corrida_termino(eng, "cajero", 5, "2026-08-01T09:00:00")
+    assert db.termino_reciente(eng, "cajero", "2026-08-01T11:00:00") is True
+
+
+def test_termino_reciente_da_false_pasadas_24_horas(tmp_path):
+    eng = db.engine(tmp_path / "tr3.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-07-01T00:00:00")
+    db.registrar_corrida_termino(eng, "cajero", 5, "2026-08-01T09:00:00")
+    assert db.termino_reciente(eng, "cajero", "2026-08-02T10:00:00") is False
+
+
+def test_termino_reciente_da_false_si_el_termino_no_existe(tmp_path):
+    eng = db.engine(tmp_path / "tr4.db")
+    db.ensure_schema(eng)
+    assert db.termino_reciente(eng, "inexistente", "2026-08-01T00:00:00") is False
+
+
 def test_upsert_ofertas_ignora_duplicados(tmp_path):
     eng = db.engine(tmp_path / "o.db")
     db.ensure_schema(eng)  # ensure_schema ya crea la tabla `ofertas`
