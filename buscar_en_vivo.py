@@ -134,8 +134,10 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
         # pueda reintentarse.
         if alguna_respondio:
             db.registrar_corrida_termino(eng, cargo, total_cargo, ahora)
-        buscados.append(cargo)
-        ofertas_nuevas[cargo] = len(urls_nuevas_cargo)
+            buscados.append(cargo)
+            ofertas_nuevas[cargo] = len(urls_nuevas_cargo)
+        else:
+            en_cola.append(cargo)
         urls_nuevas_totales.extend(urls_nuevas_cargo)
         if on_progreso:
             on_progreso(i + 1, len(cargos), cargo)

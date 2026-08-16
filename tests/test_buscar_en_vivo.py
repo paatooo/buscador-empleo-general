@@ -105,11 +105,18 @@ def test_buscar_ninguna_fuente_responde_no_registra_la_corrida(tmp_path):
          patch("fuente_trabajando.fetch_all", falla), \
          patch("fuente_laborum.fetch_all", falla), \
          patch("fuente_computrabajo.fetch_all", falla):
-        buscar_en_vivo.buscar(eng, ["cajero"], ahora="2026-08-07T10:00:00")
+        resumen = buscar_en_vivo.buscar(eng, ["cajero"], ahora="2026-08-07T10:00:00")
 
     fila = db.consultar(eng, "SELECT ultima_corrida FROM terminos_busqueda"
                              " WHERE termino = 'cajero'")[0]
     assert fila[0] is None, "no debe quedar marcado como corrido"
+
+    assert "cajero" in resumen["en_cola"], \
+        "un cargo nunca buscado (ninguna fuente respondió) debe quedar pendiente"
+    assert "cajero" not in resumen["buscados"], \
+        "no debe reportarse como buscado si ninguna fuente respondió"
+    assert "cajero" not in resumen["ofertas_nuevas"], \
+        "no debe tener conteo de ofertas si nunca se buscó de verdad"
 
 
 def test_buscar_corta_fuentes_por_presupuesto_dentro_de_un_cargo(tmp_path):
