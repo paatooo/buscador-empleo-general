@@ -18,21 +18,18 @@ from motor.texto import normalizar
 import db
 
 
-def run(eng, db_path=None) -> dict:
-    db.ensure_schema(eng)
-    filas_ofertas = db.consultar(eng, "SELECT job_url, site, title, company,"
-                                      " location, date_posted, is_remote,"
-                                      " description, scrape_date, last_seen"
-                                      " FROM ofertas")
-    if not filas_ofertas:
-        return {"analizadas": 0, "duplicadas": 0}
+def _cargar_filas_ofertas(eng):
+    return db.consultar(eng, "SELECT job_url, site, title, company,"
+                             " location, date_posted, is_remote,"
+                             " description, scrape_date, last_seen"
+                             " FROM ofertas")
 
-    hoy = datetime.now(timezone.utc).date()
-    ultima_corrida = max(
-        (f[9] for f in filas_ofertas if f[9]), default=hoy.isoformat())
 
-    # Deduplicación por contenido: misma oferta publicada varias veces
-    # (distinto link o distinta fuente). Se conserva la primera capturada.
+def _duplicada_por_url(filas_ofertas):
+    """Clave de deduplicación por contenido: misma oferta publicada varias
+    veces (distinto link o distinta fuente). Se conserva la primera
+    capturada. Se calcula siempre sobre TODAS las filas recibidas, para
+    que una URL nueva se compare también contra ofertas viejas."""
     ordenadas = sorted(filas_ofertas, key=lambda f: (f[8] or "", f[0]))
     vistas_clave = set()
     duplicada_por_url = {}
@@ -41,35 +38,82 @@ def run(eng, db_path=None) -> dict:
         clave = f"{normalizar(title)}|{normalizar(company)}|{region(location)}"
         duplicada_por_url[job_url] = clave in vistas_clave
         vistas_clave.add(clave)
+    return duplicada_por_url
 
-    filas_analisis = []
-    for f in filas_ofertas:
-        (job_url, site, title, company, location, date_posted, is_remote,
-         description, scrape_date, last_seen) = f
-        texto_completo = f"{title} {company} {description}"
-        habilidades = detectar(texto_completo)
-        areas = clasificar_areas(texto_completo)
-        es_remoto = str(is_remote).lower() == "true"
-        vig = vigencia(date_posted, last_seen, hoy, ultima_corrida)
-        filas_analisis.append({
-            "job_url": job_url,
-            "habilidades": json.dumps(habilidades, ensure_ascii=False),
-            "areas": json.dumps(areas, ensure_ascii=False),
-            "region": region(location),
-            "modalidad": modalidad(texto_completo, es_remoto=es_remoto),
-            "tipo_contrato": tipo_contrato(texto_completo),
-            "anios_experiencia_pedidos": anios_experiencia(texto_completo),
-            "ingles_excluyente": int(ingles_excluyente(texto_completo)),
-            "duplicada": int(duplicada_por_url.get(job_url, False)),
-            "vigencia_estimada": json.dumps(vig, ensure_ascii=False),
-            "analizado_en": hoy.isoformat(),
-        })
 
+def _analizar_fila(f, hoy, ultima_corrida, duplicada_por_url):
+    (job_url, site, title, company, location, date_posted, is_remote,
+     description, scrape_date, last_seen) = f
+    texto_completo = f"{title} {company} {description}"
+    habilidades = detectar(texto_completo)
+    areas = clasificar_areas(texto_completo)
+    es_remoto = str(is_remote).lower() == "true"
+    vig = vigencia(date_posted, last_seen, hoy, ultima_corrida)
+    return {
+        "job_url": job_url,
+        "habilidades": json.dumps(habilidades, ensure_ascii=False),
+        "areas": json.dumps(areas, ensure_ascii=False),
+        "region": region(location),
+        "modalidad": modalidad(texto_completo, es_remoto=es_remoto),
+        "tipo_contrato": tipo_contrato(texto_completo),
+        "anios_experiencia_pedidos": anios_experiencia(texto_completo),
+        "ingles_excluyente": int(ingles_excluyente(texto_completo)),
+        "duplicada": int(duplicada_por_url.get(job_url, False)),
+        "vigencia_estimada": json.dumps(vig, ensure_ascii=False),
+        "analizado_en": hoy.isoformat(),
+    }
+
+
+def run(eng, db_path=None) -> dict:
+    db.ensure_schema(eng)
+    filas_ofertas = _cargar_filas_ofertas(eng)
+    if not filas_ofertas:
+        return {"analizadas": 0, "duplicadas": 0}
+
+    hoy = datetime.now(timezone.utc).date()
+    ultima_corrida = max(
+        (f[9] for f in filas_ofertas if f[9]), default=hoy.isoformat())
+    duplicada_por_url = _duplicada_por_url(filas_ofertas)
+
+    filas_analisis = [_analizar_fila(f, hoy, ultima_corrida, duplicada_por_url)
+                      for f in filas_ofertas]
     db.upsert_oferta_analisis(eng, filas_analisis)
 
     return {
         "analizadas": len(filas_analisis),
         "duplicadas": sum(1 for v in duplicada_por_url.values() if v),
+    }
+
+
+def run_urls(eng, urls: list[str]) -> dict:
+    """Igual que run(), pero solo calcula y guarda el análisis pesado
+    (habilidades, áreas, etc.) para `urls` — pensado para la búsqueda en
+    vivo, que no puede pagar el costo de reanalizar toda la tabla dentro
+    de su presupuesto de tiempo. La deduplicación sigue mirando la base
+    completa: una URL nueva puede ser duplicado de una oferta vieja que
+    no está en `urls`."""
+    db.ensure_schema(eng)
+    if not urls:
+        return {"analizadas": 0, "duplicadas": 0}
+
+    filas_ofertas = _cargar_filas_ofertas(eng)
+    if not filas_ofertas:
+        return {"analizadas": 0, "duplicadas": 0}
+
+    hoy = datetime.now(timezone.utc).date()
+    ultima_corrida = max(
+        (f[9] for f in filas_ofertas if f[9]), default=hoy.isoformat())
+    duplicada_por_url = _duplicada_por_url(filas_ofertas)
+
+    urls_pedidas = set(urls)
+    filas_pedidas = [f for f in filas_ofertas if f[0] in urls_pedidas]
+    filas_analisis = [_analizar_fila(f, hoy, ultima_corrida, duplicada_por_url)
+                      for f in filas_pedidas]
+    db.upsert_oferta_analisis(eng, filas_analisis)
+
+    return {
+        "analizadas": len(filas_analisis),
+        "duplicadas": sum(1 for u in urls_pedidas if duplicada_por_url.get(u, False)),
     }
 
 

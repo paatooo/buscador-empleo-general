@@ -112,3 +112,58 @@ def test_run_es_atomico_no_deja_tabla_a_medio_escribir(tmp_path):
     analizar.run(eng)
     analizar.run(eng)
     assert db.escalar(eng, "SELECT COUNT(*) FROM oferta_analisis") == 1
+
+
+def test_run_urls_analiza_solo_las_pedidas(tmp_path):
+    eng = db.engine(tmp_path / "au1.db")
+    _con_ofertas(eng, [
+        {"job_url": "http://x/1", "title": "Cajero", "company": "Super X",
+         "description": "Se busca cajero, manejo de caja.", "scrape_date": "2026-08-01"},
+        {"job_url": "http://x/2", "title": "Guardia", "company": "Segura Ltda",
+         "description": "Guardia de seguridad turno noche.", "scrape_date": "2026-08-01"},
+    ])
+    resumen = analizar.run_urls(eng, ["http://x/1"])
+    assert resumen["analizadas"] == 1
+    filas = db.consultar(eng, "SELECT job_url FROM oferta_analisis")
+    assert [f[0] for f in filas] == ["http://x/1"]
+
+
+def test_run_urls_detecta_duplicado_contra_oferta_vieja_ya_analizada(tmp_path):
+    eng = db.engine(tmp_path / "au2.db")
+    _con_ofertas(eng, [
+        {"job_url": "http://x/1", "site": "trabajando", "title": "Cajero/a",
+         "company": "Super X", "description": "texto", "scrape_date": "2026-08-01"},
+    ])
+    analizar.run(eng)  # deja http://x/1 analizada y marcada "no duplicada"
+
+    _con_ofertas(eng, [
+        {"job_url": "http://x/2", "site": "computrabajo", "title": "CAJERO/A",
+         "company": "super x", "description": "texto", "scrape_date": "2026-08-02"},
+    ])
+    resumen = analizar.run_urls(eng, ["http://x/2"])
+    assert resumen["analizadas"] == 1
+    assert resumen["duplicadas"] == 1
+    duplicada = db.consultar(eng, "SELECT duplicada FROM oferta_analisis"
+                                  " WHERE job_url = 'http://x/2'")[0][0]
+    assert duplicada == 1
+    original = db.consultar(eng, "SELECT duplicada FROM oferta_analisis"
+                                 " WHERE job_url = 'http://x/1'")[0][0]
+    assert original == 0
+
+
+def test_run_urls_sin_urls_no_hace_nada(tmp_path):
+    eng = db.engine(tmp_path / "au3.db")
+    db.ensure_schema(eng)
+    assert analizar.run_urls(eng, []) == {"analizadas": 0, "duplicadas": 0}
+
+
+def test_run_urls_no_reescribe_lo_no_pedido(tmp_path):
+    eng = db.engine(tmp_path / "au4.db")
+    _con_ofertas(eng, [
+        {"job_url": "http://x/1", "title": "Cajero", "company": "X",
+         "description": "texto", "scrape_date": "2026-08-01"},
+        {"job_url": "http://x/2", "title": "Guardia", "company": "Y",
+         "description": "texto", "scrape_date": "2026-08-01"},
+    ])
+    analizar.run_urls(eng, ["http://x/1"])
+    assert db.escalar(eng, "SELECT COUNT(*) FROM oferta_analisis") == 1
