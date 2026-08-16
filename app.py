@@ -121,8 +121,8 @@ def _buscar_en_vivo_con_progreso(cargos: list[str]) -> None:
         barra.progress(indice / total, text=f"Buscando «{cargo}»"
                        f" ({indice}/{total})...")
 
-    eng = db.engine()
     try:
+        eng = db.engine()
         resumen = buscar_en_vivo.buscar(eng, cargos, on_progreso=avance)
     except Exception as e:
         # El perfil ya se guardó (ver `st.success` más arriba) antes de

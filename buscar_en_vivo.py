@@ -155,9 +155,14 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
         if alguna_respondio and not cortado_por_presupuesto:
             db.registrar_corrida_termino(eng, cargo, total_cargo, ahora)
             buscados.append(cargo)
-            ofertas_nuevas[cargo] = ofertas_insertadas_cargo
         else:
             en_cola.append(cargo)
+        # Fuera del if/else: un cargo cortado a mitad de camino puede
+        # haber insertado ofertas reales antes del corte (p. ej. getonbrd
+        # alcanzó a responder, laborum no) — sin esto quedaba sin clave en
+        # ofertas_nuevas, y la app mostraba "no encontramos nada" mientras
+        # esas ofertas ya estaban visibles (la caché se limpia siempre).
+        ofertas_nuevas[cargo] = ofertas_insertadas_cargo
         urls_nuevas_totales.extend(urls_nuevas_cargo)
         if on_progreso:
             on_progreso(i + 1, len(cargos), cargo)

@@ -115,8 +115,9 @@ def test_buscar_ninguna_fuente_responde_no_registra_la_corrida(tmp_path):
         "un cargo nunca buscado (ninguna fuente respondió) debe quedar pendiente"
     assert "cajero" not in resumen["buscados"], \
         "no debe reportarse como buscado si ninguna fuente respondió"
-    assert "cajero" not in resumen["ofertas_nuevas"], \
-        "no debe tener conteo de ofertas si nunca se buscó de verdad"
+    assert resumen["ofertas_nuevas"]["cajero"] == 0, \
+        "el conteo debe reflejar que no se insertó nada, aunque el cargo" \
+        " haya sido intentado (y no registrado como corrido)"
 
 
 def test_buscar_corta_fuentes_por_presupuesto_dentro_de_un_cargo(tmp_path):
@@ -155,6 +156,33 @@ def test_buscar_corta_fuentes_por_presupuesto_dentro_de_un_cargo(tmp_path):
                              " WHERE termino = 'cajero'")[0]
     assert fila[0] is None, \
         "un cargo cortado por presupuesto no debe quedar marcado como corrido"
+
+
+def test_buscar_reporta_lo_insertado_aunque_se_corte_por_presupuesto(tmp_path):
+    """Getonbrd alcanza a responder (y a insertar una oferta) antes de que
+    el presupuesto corte el resto de las fuentes — ese hallazgo no debe
+    perderse del resumen, aunque el cargo termine en en_cola en vez de
+    buscados: si no, la app diría "no encontramos nada" mientras la
+    oferta ya está guardada y visible (la caché se limpia siempre)."""
+    eng = db.engine(tmp_path / "b6b.db")
+    db.ensure_schema(eng)
+
+    with patch("fuente_getonbrd.fetch_all",
+               return_value=([_fila_falsa("http://gb/1", "cajero")],
+                             {"http://gb/1"}, None)), \
+         patch("fuente_trabajando.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_laborum.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_computrabajo.fetch_all", return_value=([], set(), None)), \
+         patch("time.monotonic", side_effect=[0, 0, 0, 100]):
+        # inicio=0; chequeo antes del cargo=0 (ok); antes de getonbrd=0
+        # (ok, corre e inserta); antes de trabajando=100 (excede
+        # presupuesto de 50s, corta ahí).
+        resumen = buscar_en_vivo.buscar(eng, ["cajero"], presupuesto_segundos=50,
+                                        ahora="2026-08-07T10:00:00")
+
+    assert resumen["en_cola"] == ["cajero"]
+    assert resumen["ofertas_nuevas"]["cajero"] == 1
+    assert db.escalar(eng, "SELECT COUNT(*) FROM ofertas") == 1
 
 
 def test_buscar_dos_cargos_el_segundo_queda_en_cola_por_presupuesto(tmp_path):
