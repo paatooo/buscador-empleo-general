@@ -19,12 +19,19 @@ import fuente_getonbrd
 import fuente_laborum
 import fuente_trabajando
 
-PRESUPUESTO_SEGUNDOS_DEFECTO = 30
+# 30s era una meta, no una medida: las cuatro fuentes tienen sus propios
+# pisos de paginación/espera (heredados del diseño de lote de 45 minutos
+# de recolectar.py), que en la práctica hacen que una corrida real tome
+# entre 60 y 200+ segundos por cargo — confirmado con una corrida de
+# producción de esta misma recolección (~240s para un solo término contra
+# las cuatro fuentes). 240s refleja ese comportamiento medido, no un
+# número redondo elegido a ojo.
+PRESUPUESTO_SEGUNDOS_DEFECTO = 240
 
 MAX_SIMULTANEAS = 3
 
 # Orden de velocidad esperada, NO el orden de recolectar.py: acá interesa
-# maximizar lo que llega antes del corte de 30s, así que la fuente más
+# maximizar lo que llega antes del corte de tiempo, así que la fuente más
 # lenta (computrabajo, HTML paginado) va al final — la primera en
 # quedarse sin tiempo si hay que cortar. Se guardan los módulos, no
 # `modulo.fetch_all` ya resuelto, por la misma razón que en
@@ -81,6 +88,7 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
     ofertas_nuevas = {}
     urls_nuevas_totales = []
     conocidas = {f["job_url"] for f in db.cargar_ofertas(eng)}
+    vigentes_totales = set()
     agotado = False
 
     for i, cargo in enumerate(cargos):
@@ -97,10 +105,13 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
 
         total_cargo = 0
         alguna_respondio = False
+        cortado_por_presupuesto = False
         urls_nuevas_cargo = []
+        ofertas_insertadas_cargo = 0
         for nombre_fuente, modulo in FUENTES:
             if time.monotonic() - inicio > presupuesto_segundos:
                 agotado = True
+                cortado_por_presupuesto = True
                 break
             try:
                 filas, vigentes, error = modulo.fetch_all(
@@ -108,6 +119,7 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
             except Exception as e:
                 filas, vigentes, error = [], set(), str(e)[:300]
             vigentes = vigentes or set()
+            vigentes_totales |= vigentes
             total_cargo += len(vigentes)
             if filas:
                 for f in filas:
@@ -116,7 +128,8 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
                     f.setdefault("search_term", cargo)
                 columnas = [c for c in COLUMNAS_OFERTA if c in filas[0]]
                 try:
-                    db.upsert_ofertas(eng, filas, columnas)
+                    ofertas_insertadas_cargo += db.upsert_ofertas(
+                        eng, filas, columnas)
                 except Exception as e:
                     print(f"[ERROR] guardando ofertas de {nombre_fuente}"
                          f" '{cargo}': {e}")
@@ -131,17 +144,25 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
         # Mismo criterio que recolectar.py (commit 8203005): una corrida
         # donde ninguna fuente respondió no es información sobre el
         # cargo, es información sobre la red — no se registra, para que
-        # pueda reintentarse.
-        if alguna_respondio:
+        # pueda reintentarse. Además, si el presupuesto cortó el bucle de
+        # fuentes a mitad de camino, tampoco se registra como corrida: el
+        # cargo solo se probó parcialmente (p. ej. 2 de 4 fuentes), así
+        # que marcarlo como "corrido" lo sacaría de rotación 24h y podría
+        # despriorizarlo como estéril si lo poco que se probó no encontró
+        # nada — mismo bug que ya se corrigió una vez para el chequeo
+        # entre cargos, reintroducido acá por el chequeo dentro de un
+        # mismo cargo.
+        if alguna_respondio and not cortado_por_presupuesto:
             db.registrar_corrida_termino(eng, cargo, total_cargo, ahora)
             buscados.append(cargo)
-            ofertas_nuevas[cargo] = len(urls_nuevas_cargo)
+            ofertas_nuevas[cargo] = ofertas_insertadas_cargo
         else:
             en_cola.append(cargo)
         urls_nuevas_totales.extend(urls_nuevas_cargo)
         if on_progreso:
             on_progreso(i + 1, len(cargos), cargo)
 
+    db.actualizar_last_seen(eng, vigentes_totales, hoy)
     if urls_nuevas_totales:
         analizar.run_urls(eng, urls_nuevas_totales)
 

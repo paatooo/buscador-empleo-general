@@ -104,8 +104,8 @@ def formulario_perfil(perfil_actual: Perfil | None) -> Perfil | None:
 
 def _buscar_en_vivo_con_progreso(cargos: list[str]) -> None:
     """Ningún cargo del perfil recién guardado calza con nada — busca en
-    vivo contra las cuatro fuentes (tope 30s, resultados parciales) en
-    vez de dejar a la persona con la app vacía hasta la corrida
+    vivo contra las cuatro fuentes (tope de tiempo, resultados parciales)
+    en vez de dejar a la persona con la app vacía hasta la corrida
     programada de mañana."""
     import buscar_en_vivo
     import db
@@ -122,7 +122,21 @@ def _buscar_en_vivo_con_progreso(cargos: list[str]) -> None:
                        f" ({indice}/{total})...")
 
     eng = db.engine()
-    resumen = buscar_en_vivo.buscar(eng, cargos, on_progreso=avance)
+    try:
+        resumen = buscar_en_vivo.buscar(eng, cargos, on_progreso=avance)
+    except Exception as e:
+        # El perfil ya se guardó (ver `st.success` más arriba) antes de
+        # llegar acá — una falla transitoria a mitad de una búsqueda que
+        # ahora puede tomar varios minutos (ver PRESUPUESTO_SEGUNDOS_DEFECTO
+        # en buscar_en_vivo.py) no debe dejar a la persona con un
+        # traceback crudo por algo que de todos modos ya funcionó.
+        barra.empty()
+        print(f"[ERROR] busqueda en vivo: {e}")
+        st.warning("No pudimos completar la búsqueda en vivo — probá de "
+                  "nuevo más tarde, o esperá a la próxima corrida "
+                  "programada.")
+        _ofertas_crudas.clear()
+        return
     barra.empty()
 
     # Limpiar siempre, no solo cuando ofertas_nuevas trae algo: en un caso

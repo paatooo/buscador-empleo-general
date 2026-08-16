@@ -143,7 +143,18 @@ def test_buscar_corta_fuentes_por_presupuesto_dentro_de_un_cargo(tmp_path):
     m_lb.assert_not_called()
     m_ct.assert_not_called()
     assert resumen["agotado"] is True
-    assert resumen["buscados"] == ["cajero"]
+    # El bucle de fuentes se cortó a mitad de camino (solo 2 de 4
+    # respondieron) — no se registra como corrido, aunque algunas fuentes
+    # sí hayan respondido: registrarlo excluiría el término de
+    # `terminos_pendientes` por 24h y podría despriorizarlo como estéril
+    # con datos incompletos.
+    assert resumen["buscados"] == []
+    assert resumen["en_cola"] == ["cajero"]
+
+    fila = db.consultar(eng, "SELECT ultima_corrida FROM terminos_busqueda"
+                             " WHERE termino = 'cajero'")[0]
+    assert fila[0] is None, \
+        "un cargo cortado por presupuesto no debe quedar marcado como corrido"
 
 
 def test_buscar_dos_cargos_el_segundo_queda_en_cola_por_presupuesto(tmp_path):
@@ -169,6 +180,27 @@ def test_buscar_dos_cargos_el_segundo_queda_en_cola_por_presupuesto(tmp_path):
     assert db.escalar(
         eng, "SELECT COUNT(*) FROM terminos_busqueda WHERE termino = 'reponedor'"
     ) == 1
+
+
+def test_buscar_refresca_last_seen_de_ofertas_confirmadas_vigentes(tmp_path):
+    eng = db.engine(tmp_path / "b6b.db")
+    db.ensure_schema(eng)
+    # Oferta ya conocida (no nueva) con un last_seen viejo.
+    fila_vieja = _fila_falsa("http://gb/viejo", "cajero")
+    fila_vieja["last_seen"] = "2026-07-01"
+    db.upsert_ofertas(eng, [fila_vieja], list(fila_vieja.keys()))
+
+    with patch("fuente_getonbrd.fetch_all",
+               return_value=([], {"http://gb/viejo"}, None)), \
+         patch("fuente_trabajando.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_laborum.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_computrabajo.fetch_all", return_value=([], set(), None)):
+        buscar_en_vivo.buscar(eng, ["cajero"], ahora="2026-08-07T10:00:00")
+
+    fila = db.consultar(eng, "SELECT last_seen FROM ofertas"
+                             " WHERE job_url = 'http://gb/viejo'")[0]
+    assert fila[0] == "2026-08-07", \
+        "una oferta confirmada vigente hoy debe refrescar su last_seen aunque no sea nueva"
 
 
 def test_buscar_llama_on_progreso_por_cada_cargo(tmp_path):
