@@ -94,7 +94,47 @@ def formulario_perfil(perfil_actual: Perfil | None) -> Perfil | None:
     )
     app_data.guardar_perfil(st.session_state["usuario_id"], nuevo, _ahora())
     st.success("Perfil guardado.")
+
+    crudas = _ofertas_crudas()
+    if not app_data.puntuar_ofertas(app_data.sin_duplicadas(crudas), nuevo):
+        _buscar_en_vivo_con_progreso(nuevo.cargos_buscados)
+
     return nuevo
+
+
+def _buscar_en_vivo_con_progreso(cargos: list[str]) -> None:
+    """Ningún cargo del perfil recién guardado calza con nada — busca en
+    vivo contra las cuatro fuentes (tope 30s, resultados parciales) en
+    vez de dejar a la persona con la app vacía hasta la corrida
+    programada de mañana."""
+    import buscar_en_vivo
+    import db
+
+    # st.progress no es un widget con estado (no acepta key=) — es un
+    # elemento de despliegue puro, así que no le aplica el problema de
+    # DuplicateElementId que sí afecta a los widgets interactivos.
+    barra = st.progress(
+        0.0, text="Todavía no tenemos ofertas para tu perfil — buscando en "
+                  "vivo (esta es una primera pasada; mañana habrá más).")
+
+    def avance(indice, total, cargo):
+        barra.progress(indice / total, text=f"Buscando «{cargo}»"
+                       f" ({indice}/{total})...")
+
+    eng = db.engine()
+    resumen = buscar_en_vivo.buscar(eng, cargos, on_progreso=avance)
+    barra.empty()
+
+    # Limpiar siempre, no solo cuando ofertas_nuevas trae algo: en un caso
+    # extremo (una fuente devuelve filas junto con un error, así que
+    # alguna_respondio queda en False) una oferta puede haberse insertado
+    # sin que el cargo tenga clave en ofertas_nuevas — más barato limpiar
+    # de más (una lectura extra a la base) que arriesgar una caché
+    # desactualizada.
+    _ofertas_crudas.clear()
+    if not any(resumen["ofertas_nuevas"].values()):
+        st.info("Todavía no encontramos ofertas publicadas para lo que "
+                "buscás — seguimos intentando en las próximas corridas.")
 
 
 ESTADOS_VIGENCIA = {"activa": "🟢 Activa", "por_vencer": "🟠 Por vencer",
