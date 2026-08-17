@@ -35,16 +35,16 @@ def pantalla_correo() -> str | None:
 
 def formulario_perfil(perfil_actual: Perfil | None) -> Perfil | None:
     st.subheader("Tu perfil")
-    st.caption("Esto define qué ofertas te mostramos. Podés volver a "
+    st.caption("Esto define qué ofertas te mostramos. Puedes volver a "
                "editarlo cuando quieras.")
     valores = perfil_actual or Perfil(cargos_buscados=[])
     with st.form("form_perfil", clear_on_submit=False):
         cargos_texto = st.text_area(
-            "Cargos que buscás (uno por línea)", key="perfil_cargos",
+            "Cargos que buscas (uno por línea)", key="perfil_cargos",
             value="\n".join(valores.cargos_buscados),
             placeholder="cajero\nasistente contable")
         habilidades = st.multiselect(
-            "Habilidades que tenés (opcional)", HABILIDADES_DISPONIBLES,
+            "Habilidades que tienes (opcional)", HABILIDADES_DISPONIBLES,
             key="perfil_habilidades", default=valores.habilidades)
         c1, c2 = st.columns(2)
         anios = c1.number_input(
@@ -64,7 +64,7 @@ def formulario_perfil(perfil_actual: Perfil | None) -> Perfil | None:
             "Acepto trabajo remoto", key="perfil_remoto",
             value=valores.acepta_remoto)
         evitar_texto = st.text_area(
-            "Qué querés evitar (uno por línea, opcional)",
+            "Qué quieres evitar (uno por línea, opcional)",
             key="perfil_evitar", value="\n".join(valores.evitar),
             placeholder="plástico\ncall center")
         enviado = st.form_submit_button("Guardar perfil", key="perfil_guardar")
@@ -74,7 +74,7 @@ def formulario_perfil(perfil_actual: Perfil | None) -> Perfil | None:
 
     cargos = [c.strip() for c in cargos_texto.splitlines() if c.strip()]
     if not cargos:
-        st.error("Escribí al menos un cargo que estés buscando.")
+        st.error("Escribe al menos un cargo que estés buscando.")
         return None
 
     evitar = [e.strip() for e in evitar_texto.splitlines() if e.strip()]
@@ -126,14 +126,14 @@ def _buscar_en_vivo_con_progreso(cargos: list[str]) -> None:
         resumen = buscar_en_vivo.buscar(eng, cargos, on_progreso=avance)
     except Exception as e:
         # El perfil ya se guardó (ver `st.success` más arriba) antes de
-        # llegar acá — una falla transitoria a mitad de una búsqueda que
+        # llegar aquí — una falla transitoria a mitad de una búsqueda que
         # ahora puede tomar varios minutos (ver PRESUPUESTO_SEGUNDOS_DEFECTO
         # en buscar_en_vivo.py) no debe dejar a la persona con un
         # traceback crudo por algo que de todos modos ya funcionó.
         barra.empty()
         print(f"[ERROR] busqueda en vivo: {e}")
-        st.warning("No pudimos completar la búsqueda en vivo — probá de "
-                  "nuevo más tarde, o esperá a la próxima corrida "
+        st.warning("No pudimos completar la búsqueda en vivo — prueba de "
+                  "nuevo más tarde, o espera a la próxima corrida "
                   "programada.")
         _ofertas_crudas.clear()
         return
@@ -148,7 +148,7 @@ def _buscar_en_vivo_con_progreso(cargos: list[str]) -> None:
     _ofertas_crudas.clear()
     if not any(resumen["ofertas_nuevas"].values()):
         st.info("Todavía no encontramos ofertas publicadas para lo que "
-                "buscás — seguimos intentando en las próximas corridas.")
+                "buscas — seguimos intentando en las próximas corridas.")
 
 
 ESTADOS_VIGENCIA = {"activa": "🟢 Activa", "por_vencer": "🟠 Por vencer",
@@ -203,9 +203,9 @@ def tab_ofertas(perfil, usuario_id: str):
     puntuadas = app_data.puntuar_ofertas(app_data.sin_duplicadas(crudas), perfil)
     if not puntuadas:
         st.info("No encontramos ofertas que calcen con los cargos que "
-                "buscás todavía. Probá agregar otro cargo en tu perfil.")
+                "buscas todavía. Prueba agregar otro cargo en tu perfil.")
         return
-    st.write(f"{len(puntuadas)} ofertas para vos, ordenadas por match.")
+    st.write(f"{len(puntuadas)} ofertas para ti, ordenadas por match.")
     marcas = app_data.marcas_de(usuario_id)
     for oferta in puntuadas[:50]:
         _tarjeta_oferta(oferta, marcas, usuario_id, "of")
@@ -223,7 +223,7 @@ def tab_filtro_avanzado(perfil, usuario_id: str):
         return
 
     st.caption("Filtro con control total sobre cada criterio — a "
-               "diferencia de «Ofertas para ti», acá podés ver también lo "
+               "diferencia de «Ofertas para ti», aquí puedes ver también lo "
                "que normalmente queda afuera (duplicadas, con inglés "
                "excluyente, etc.).")
 
@@ -373,7 +373,7 @@ def tab_acerca(perfil, usuario_id: str):
     st.write("El puntaje de cada oferta se calcula al momento de cargar la "
              "página, contra tu perfil — no se guarda en ningún lado ni se "
              "comparte entre usuarios.")
-    st.caption("Mientras el ingreso sea solo por correo, evitá compartir "
+    st.caption("Mientras el ingreso sea solo por correo, evita compartir "
                "esta app con desconocidos: cualquiera que escriba tu "
                "correo puede ver tu perfil y tus marcas.")
 
