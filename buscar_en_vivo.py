@@ -30,6 +30,14 @@ PRESUPUESTO_SEGUNDOS_DEFECTO = 240
 
 MAX_SIMULTANEAS = 3
 
+# Freno propio de la búsqueda forzada (botón "buscar de nuevo" en
+# app.py), separado del umbral de 24h de la reutilización normal — sin
+# él, alguien podría apretar el botón varias veces seguidas y disparar
+# búsquedas reales una tras otra contra los cuatro sitios externos. 30s
+# es un valor de prueba explícito del usuario, no definitivo — subir
+# una vez que haya uso real (ver "Pendiente de calibración" del spec).
+COOLDOWN_FORZAR_SEGUNDOS = 30
+
 # Orden de velocidad esperada, NO el orden de recolectar.py: acá interesa
 # maximizar lo que llega antes del corte de tiempo, así que la fuente más
 # lenta (computrabajo, HTML paginado) va al final — la primera en
@@ -53,13 +61,18 @@ _semaforo = threading.Semaphore(MAX_SIMULTANEAS)
 
 def buscar(eng, cargos: list[str],
           presupuesto_segundos: int = PRESUPUESTO_SEGUNDOS_DEFECTO,
-          ahora: str | None = None, on_progreso=None) -> dict:
+          ahora: str | None = None, on_progreso=None,
+          forzar: bool = False) -> dict:
     """Busca en vivo los `cargos` que lo necesiten contra las cuatro
     fuentes, con un presupuesto de tiempo total. `on_progreso`, si se
     pasa, se llama como `on_progreso(indice, total, cargo)` después de
     procesar cada cargo (buscado o reutilizado) — para que `app.py`
     pueda mostrar una barra de progreso sin que este módulo dependa de
-    streamlit."""
+    streamlit. `forzar=True` reduce el umbral de reutilización de 24h a
+    `COOLDOWN_FORZAR_SEGUNDOS` — pensado para un botón de "buscar de
+    nuevo" a demanda: un cargo recién buscado sigue reutilizándose
+    dentro de esa ventana corta, pero cualquier cargo fuera de ella se
+    busca de verdad, sin esperar 24h."""
     db.ensure_schema(eng)
     ahora = ahora or datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
@@ -73,13 +86,15 @@ def buscar(eng, cargos: list[str],
                 "ofertas_nuevas": {}, "agotado": False}
     try:
         return _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora,
-                                on_progreso)
+                                on_progreso, forzar)
     finally:
         _semaforo.release()
 
 
-def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> dict:
+def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso,
+                     forzar=False) -> dict:
     hoy = ahora[:10]
+    horas_reutilizacion = COOLDOWN_FORZAR_SEGUNDOS / 3600 if forzar else None
     for cargo in cargos:
         db.agregar_termino(eng, cargo, "usuario", ahora)
 
@@ -92,7 +107,7 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso) -> d
     agotado = False
 
     for i, cargo in enumerate(cargos):
-        if db.termino_reciente(eng, cargo, ahora):
+        if db.termino_reciente(eng, cargo, ahora, horas=horas_reutilizacion):
             reutilizados.append(cargo)
             if on_progreso:
                 on_progreso(i + 1, len(cargos), cargo)

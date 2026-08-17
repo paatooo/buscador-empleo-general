@@ -284,3 +284,69 @@ def test_buscar_con_el_cupo_lleno_no_scrapea_y_encola(tmp_path):
     finally:
         for _ in range(buscar_en_vivo.MAX_SIMULTANEAS):
             buscar_en_vivo._semaforo.release()
+
+
+def test_buscar_forzar_vuelve_a_scrapear_un_cargo_de_hace_mas_de_30s(tmp_path):
+    eng = db.engine(tmp_path / "bf1.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "usuario", "2026-08-16T10:00:00")
+    db.registrar_corrida_termino(eng, "cajero", 5, "2026-08-16T10:00:00")
+
+    with patch("fuente_getonbrd.fetch_all",
+               return_value=([], set(), None)) as m_gb, \
+         patch("fuente_trabajando.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_laborum.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_computrabajo.fetch_all", return_value=([], set(), None)):
+        # 1 minuto después de la corrida anterior: fuera del enfriamiento
+        # de 30s del forzado, muy dentro de las 24h normales (que sin
+        # forzar habrían reutilizado el cargo sin buscar de nuevo).
+        resumen = buscar_en_vivo.buscar(eng, ["cajero"],
+                                        ahora="2026-08-16T10:01:00",
+                                        forzar=True)
+
+    m_gb.assert_called_once()
+    assert resumen["buscados"] == ["cajero"]
+    assert resumen["reutilizados"] == []
+
+
+def test_buscar_forzar_sigue_reutilizando_dentro_de_los_30s(tmp_path):
+    eng = db.engine(tmp_path / "bf2.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "usuario", "2026-08-16T10:00:00")
+    db.registrar_corrida_termino(eng, "cajero", 5, "2026-08-16T10:00:00")
+
+    with patch("fuente_getonbrd.fetch_all") as m_gb, \
+         patch("fuente_trabajando.fetch_all") as m_tb, \
+         patch("fuente_laborum.fetch_all") as m_lb, \
+         patch("fuente_computrabajo.fetch_all") as m_ct:
+        # 10 segundos después: dentro del enfriamiento de 30s.
+        resumen = buscar_en_vivo.buscar(eng, ["cajero"],
+                                        ahora="2026-08-16T10:00:10",
+                                        forzar=True)
+
+    m_gb.assert_not_called()
+    m_tb.assert_not_called()
+    m_lb.assert_not_called()
+    m_ct.assert_not_called()
+    assert resumen["reutilizados"] == ["cajero"]
+    assert resumen["buscados"] == []
+
+
+def test_buscar_sin_forzar_no_cambia_de_comportamiento(tmp_path):
+    # Prueba de regresión: el camino automático (sin forzar) sigue
+    # reutilizando un cargo corrido hace 1 minuto, porque su umbral
+    # sigue siendo 24h, no 30s.
+    eng = db.engine(tmp_path / "bf3.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "usuario", "2026-08-16T10:00:00")
+    db.registrar_corrida_termino(eng, "cajero", 5, "2026-08-16T10:00:00")
+
+    with patch("fuente_getonbrd.fetch_all") as m_gb, \
+         patch("fuente_trabajando.fetch_all") as m_tb, \
+         patch("fuente_laborum.fetch_all") as m_lb, \
+         patch("fuente_computrabajo.fetch_all") as m_ct:
+        resumen = buscar_en_vivo.buscar(eng, ["cajero"],
+                                        ahora="2026-08-16T10:01:00")
+
+    m_gb.assert_not_called()
+    assert resumen["reutilizados"] == ["cajero"]
