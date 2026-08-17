@@ -102,20 +102,23 @@ def formulario_perfil(perfil_actual: Perfil | None) -> Perfil | None:
     return nuevo
 
 
-def _buscar_en_vivo_con_progreso(cargos: list[str]) -> None:
-    """Ningún cargo del perfil recién guardado calza con nada — busca en
-    vivo contra las cuatro fuentes (tope de tiempo, resultados parciales)
-    en vez de dejar a la persona con la app vacía hasta la corrida
-    programada de mañana."""
+def _buscar_en_vivo_con_progreso(cargos: list[str], forzar: bool = False) -> None:
+    """Busca en vivo los `cargos` dados. Sin `forzar` (el camino
+    automático, cuando el perfil recién guardado queda vacío) o con
+    `forzar=True` (el botón "Buscar de nuevo" a demanda, con un
+    enfriamiento corto en vez del umbral de 24h normal — ver
+    `buscar_en_vivo.COOLDOWN_FORZAR_SEGUNDOS`)."""
     import buscar_en_vivo
     import db
 
     # st.progress no es un widget con estado (no acepta key=) — es un
     # elemento de despliegue puro, así que no le aplica el problema de
     # DuplicateElementId que sí afecta a los widgets interactivos.
-    barra = st.progress(
-        0.0, text="Todavía no tenemos ofertas para tu perfil — buscando en "
-                  "vivo (esta es una primera pasada; mañana habrá más).")
+    texto_inicial = (
+        "Buscando de nuevo en vivo (puede tomar unos minutos)..." if forzar
+        else "Todavía no tenemos ofertas para tu perfil — buscando en "
+             "vivo (esta es una primera pasada; mañana habrá más).")
+    barra = st.progress(0.0, text=texto_inicial)
 
     def avance(indice, total, cargo):
         barra.progress(indice / total, text=f"Buscando «{cargo}»"
@@ -123,7 +126,8 @@ def _buscar_en_vivo_con_progreso(cargos: list[str]) -> None:
 
     try:
         eng = db.engine()
-        resumen = buscar_en_vivo.buscar(eng, cargos, on_progreso=avance)
+        resumen = buscar_en_vivo.buscar(eng, cargos, on_progreso=avance,
+                                        forzar=forzar)
     except Exception as e:
         # El perfil ya se guardó (ver `st.success` más arriba) antes de
         # llegar aquí — una falla transitoria a mitad de una búsqueda que
@@ -147,8 +151,17 @@ def _buscar_en_vivo_con_progreso(cargos: list[str]) -> None:
     # desactualizada.
     _ofertas_crudas.clear()
     if not any(resumen["ofertas_nuevas"].values()):
-        st.info("Todavía no encontramos ofertas publicadas para lo que "
-                "buscas — seguimos intentando en las próximas corridas.")
+        if resumen["buscados"]:
+            # Se buscó de verdad y no apareció nada nuevo.
+            st.info("Todavía no encontramos ofertas publicadas para lo que "
+                    "buscas — seguimos intentando en las próximas corridas.")
+        elif resumen["reutilizados"]:
+            # No se buscó nada de verdad porque todo estaba en
+            # enfriamiento (ver COOLDOWN_FORZAR_SEGUNDOS) — mensaje
+            # distinto: no es que no haya nada, es que se buscó hace
+            # instantes.
+            st.info("Ya buscaste esto hace muy poco — espera un momento "
+                    "antes de volver a intentar.")
 
 
 ESTADOS_VIGENCIA = {"activa": "🟢 Activa", "por_vencer": "🟠 Por vencer",
@@ -206,6 +219,8 @@ def tab_ofertas(perfil, usuario_id: str):
                 "buscas todavía. Prueba agregar otro cargo en tu perfil.")
         return
     st.write(f"{len(puntuadas)} ofertas para ti, ordenadas por match.")
+    if st.button("🔄 Buscar de nuevo en vivo", key="of_buscar_de_nuevo"):
+        _buscar_en_vivo_con_progreso(perfil.cargos_buscados, forzar=True)
     marcas = app_data.marcas_de(usuario_id)
     for oferta in puntuadas[:50]:
         _tarjeta_oferta(oferta, marcas, usuario_id, "of")
