@@ -98,6 +98,24 @@ def _buscar_con_cupo(eng, cargos, presupuesto_segundos, ahora, on_progreso,
     for cargo in cargos:
         db.agregar_termino(eng, cargo, "usuario", ahora)
 
+    if forzar:
+        # Sin esto, un perfil con varios cargos siempre repetiría el
+        # primero en cada clic del botón "buscar de nuevo": una búsqueda
+        # real tarda minutos (ver PRESUPUESTO_SEGUNDOS_DEFECTO más
+        # arriba), así que para cuando la persona vuelve a apretar, el
+        # cargo #1 ya "parece" fuera de cualquier enfriamiento razonable
+        # y se vuelve a buscar antes que los demás — encontrado en la
+        # revisión final de rama. Se ordena por el mismo criterio que ya
+        # usa `db.terminos_pendientes` para la corrida programada: nunca
+        # buscado primero, después el más antiguo.
+        ultima_por_cargo = {
+            cargo: db.consultar(
+                eng, "SELECT ultima_corrida FROM terminos_busqueda"
+                    " WHERE termino = :t", {"t": cargo})[0][0]
+            for cargo in cargos
+        }
+        cargos = sorted(cargos, key=lambda c: ultima_por_cargo[c] or "")
+
     inicio = time.monotonic()
     buscados, reutilizados, en_cola = [], [], []
     ofertas_nuevas = {}

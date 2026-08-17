@@ -102,12 +102,16 @@ def formulario_perfil(perfil_actual: Perfil | None) -> Perfil | None:
     return nuevo
 
 
-def _buscar_en_vivo_con_progreso(cargos: list[str], forzar: bool = False) -> None:
+def _buscar_en_vivo_con_progreso(cargos: list[str], forzar: bool = False) -> bool:
     """Busca en vivo los `cargos` dados. Sin `forzar` (el camino
     automático, cuando el perfil recién guardado queda vacío) o con
     `forzar=True` (el botón "Buscar de nuevo" a demanda, con un
     enfriamiento corto en vez del umbral de 24h normal — ver
-    `buscar_en_vivo.COOLDOWN_FORZAR_SEGUNDOS`)."""
+    `buscar_en_vivo.COOLDOWN_FORZAR_SEGUNDOS`).
+
+    Devuelve True solo si la búsqueda encontró ofertas nuevas de verdad —
+    así quien llama (el botón en `tab_ofertas`) sabe si necesita
+    `st.rerun()` para que la pestaña deje de mostrar la lista vieja."""
     import buscar_en_vivo
     import db
 
@@ -140,7 +144,7 @@ def _buscar_en_vivo_con_progreso(cargos: list[str], forzar: bool = False) -> Non
                   "nuevo más tarde, o espera a la próxima corrida "
                   "programada.")
         _ofertas_crudas.clear()
-        return
+        return False
     barra.empty()
 
     # Limpiar siempre, no solo cuando ofertas_nuevas trae algo: en un caso
@@ -172,6 +176,8 @@ def _buscar_en_vivo_con_progreso(cargos: list[str], forzar: bool = False) -> Non
             st.info("No pudimos empezar la búsqueda ahora mismo — "
                     "probablemente haya otras búsquedas en curso. Intenta "
                     "de nuevo en un momento.")
+        return False
+    return True
 
 
 ESTADOS_VIGENCIA = {"activa": "🟢 Activa", "por_vencer": "🟠 Por vencer",
@@ -230,7 +236,8 @@ def tab_ofertas(perfil, usuario_id: str):
         return
     st.write(f"{len(puntuadas)} ofertas para ti, ordenadas por match.")
     if st.button("🔄 Buscar de nuevo en vivo", key="of_buscar_de_nuevo"):
-        _buscar_en_vivo_con_progreso(perfil.cargos_buscados, forzar=True)
+        if _buscar_en_vivo_con_progreso(perfil.cargos_buscados, forzar=True):
+            st.rerun()
     marcas = app_data.marcas_de(usuario_id)
     for oferta in puntuadas[:50]:
         _tarjeta_oferta(oferta, marcas, usuario_id, "of")

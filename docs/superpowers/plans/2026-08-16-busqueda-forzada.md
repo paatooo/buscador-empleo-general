@@ -546,3 +546,25 @@ sitios externos.
 - `COOLDOWN_FORZAR_SEGUNDOS = 30` es un valor de prueba explícito del
   usuario — subirlo (probablemente a varios minutos) una vez que haya
   uso real del botón.
+
+Encontrado en la revisión final de rama (después de que las tareas
+individuales ya estaban aprobadas), revisado por la persona usuaria y
+explícitamente diferido — no son descuidos, son decisiones tomadas:
+
+- El enfriamiento de 30s se mide desde que la búsqueda *empieza*, no
+  desde que termina — como una búsqueda real tarda bastante más que
+  30s, en la práctica el enfriamiento casi siempre ya expiró para
+  cuando el control vuelve a la persona usuaria. Queda como pendiente
+  de calibración junto con el valor mismo de `COOLDOWN_FORZAR_SEGUNDOS`.
+- Dos sesiones distintas pueden terminar scrapeando el mismo cargo al
+  mismo tiempo — el semáforo (`MAX_SIMULTANEAS`) limita la concurrencia
+  total, pero no evita que dos personas dispares una búsqueda del mismo
+  cargo en paralelo. Queda pendiente, sin arreglo por ahora.
+- En el peor caso la página puede bloquearse hasta ~440s (cerca de 7
+  minutos): el chequeo de presupuesto ocurre *antes* de arrancar cada
+  fuente, no como un corte duro a mitad de una fuente. Es más que los
+  "unos minutos" que sugiere el texto del botón, pero ese texto no es
+  técnicamente incorrecto — queda como informativo, sin cambios.
+- El mensaje "no pudimos empezar la búsqueda ahora mismo" puede
+  aparecer también en el camino automático (perfil recién guardado sin
+  ofertas), donde no hay un botón para reintentar. Se deja tal cual.

@@ -350,3 +350,76 @@ def test_buscar_sin_forzar_no_cambia_de_comportamiento(tmp_path):
 
     m_gb.assert_not_called()
     assert resumen["reutilizados"] == ["cajero"]
+
+
+def test_buscar_forzar_prioriza_el_cargo_menos_buscado_recientemente(tmp_path):
+    eng = db.engine(tmp_path / "bf4.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "vendedor", "usuario", "2026-08-16T08:00:00")
+    db.registrar_corrida_termino(eng, "vendedor", 5, "2026-08-16T08:00:00")
+    db.agregar_termino(eng, "cajero", "usuario", "2026-08-16T09:00:00")
+    db.registrar_corrida_termino(eng, "cajero", 5, "2026-08-16T09:00:00")
+
+    orden = []
+
+    def falsa(terminos, **kwargs):
+        orden.append(terminos[0])
+        return [], set(), None
+
+    with patch("fuente_getonbrd.fetch_all", side_effect=falsa), \
+         patch("fuente_trabajando.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_laborum.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_computrabajo.fetch_all", return_value=([], set(), None)):
+        # Se pide en el orden ["cajero", "vendedor"] (cajero primero),
+        # pero vendedor se buscó hace más tiempo (08:00 vs 09:00) -- con
+        # forzar=True debe buscarse primero.
+        buscar_en_vivo.buscar(eng, ["cajero", "vendedor"],
+                              ahora="2026-08-17T10:00:00", forzar=True)
+
+    assert orden[0] == "vendedor"
+
+
+def test_buscar_forzar_prioriza_cargo_nunca_buscado(tmp_path):
+    eng = db.engine(tmp_path / "bf5.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "vendedor", "usuario", "2026-08-16T08:00:00")
+    db.registrar_corrida_termino(eng, "vendedor", 5, "2026-08-16T08:00:00")
+    # "cajero" nunca se agregó antes -- buscar() lo agrega recién ahora,
+    # así que su ultima_corrida queda NULL hasta que se busque.
+
+    orden = []
+
+    def falsa(terminos, **kwargs):
+        orden.append(terminos[0])
+        return [], set(), None
+
+    with patch("fuente_getonbrd.fetch_all", side_effect=falsa), \
+         patch("fuente_trabajando.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_laborum.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_computrabajo.fetch_all", return_value=([], set(), None)):
+        buscar_en_vivo.buscar(eng, ["vendedor", "cajero"],
+                              ahora="2026-08-17T10:00:00", forzar=True)
+
+    assert orden[0] == "cajero"
+
+
+def test_buscar_sin_forzar_respeta_el_orden_original(tmp_path):
+    # Prueba de regresión: el camino automático (sin forzar) NO debe
+    # reordenar -- solo el botón forzado necesita rotación.
+    eng = db.engine(tmp_path / "bf6.db")
+    db.ensure_schema(eng)
+
+    orden = []
+
+    def falsa(terminos, **kwargs):
+        orden.append(terminos[0])
+        return [], set(), None
+
+    with patch("fuente_getonbrd.fetch_all", side_effect=falsa), \
+         patch("fuente_trabajando.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_laborum.fetch_all", return_value=([], set(), None)), \
+         patch("fuente_computrabajo.fetch_all", return_value=([], set(), None)):
+        buscar_en_vivo.buscar(eng, ["cajero", "vendedor"],
+                              ahora="2026-08-17T10:00:00")
+
+    assert orden == ["cajero", "vendedor"]
