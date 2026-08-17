@@ -274,19 +274,24 @@ def terminos_pendientes(eng: Engine, limite: int | None = None,
     return terminos[:limite] if limite is not None else terminos
 
 
-def termino_reciente(eng: Engine, termino: str, ahora: str) -> bool:
+def termino_reciente(eng: Engine, termino: str, ahora: str,
+                     horas: float | None = None) -> bool:
     """True si `termino` se corrió (en vivo o programada) hace menos de
-    `_HORAS_MIN_ENTRE_CORRIDAS` horas. Mismo umbral y misma comparación
-    lexicográfica de cadenas ISO que ya usa `terminos_pendientes` — un
-    término nunca corrido da False."""
+    `horas` (default: `_HORAS_MIN_ENTRE_CORRIDAS`, el mismo umbral de
+    24h que usa `terminos_pendientes`). Mismo umbral por defecto y misma
+    comparación lexicográfica de cadenas ISO — un término nunca corrido
+    da False."""
     from datetime import datetime, timedelta
+
+    if horas is None:
+        horas = _HORAS_MIN_ENTRE_CORRIDAS
 
     fila = consultar(eng, "SELECT ultima_corrida FROM terminos_busqueda"
                           " WHERE termino = :t", {"t": termino})
     if not fila or fila[0][0] is None:
         return False
     corte = (datetime.fromisoformat(ahora)
-             - timedelta(hours=_HORAS_MIN_ENTRE_CORRIDAS)).isoformat()
+             - timedelta(hours=horas)).isoformat()
     return fila[0][0] >= corte
 
 

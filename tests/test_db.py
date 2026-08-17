@@ -237,6 +237,30 @@ def test_termino_reciente_da_false_si_el_termino_no_existe(tmp_path):
     assert db.termino_reciente(eng, "inexistente", "2026-08-01T00:00:00") is False
 
 
+def test_termino_reciente_sin_horas_se_comporta_como_antes(tmp_path):
+    # Prueba de regresión: sin pasar horas=, el comportamiento no cambia
+    # respecto de antes de este parámetro.
+    eng = db.engine(tmp_path / "tr5.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-07-01T00:00:00")
+    db.registrar_corrida_termino(eng, "cajero", 5, "2026-08-01T09:00:00")
+    assert db.termino_reciente(eng, "cajero", "2026-08-01T11:00:00") is True
+    assert db.termino_reciente(eng, "cajero", "2026-08-02T10:00:00") is False
+
+
+def test_termino_reciente_respeta_horas_personalizadas(tmp_path):
+    eng = db.engine(tmp_path / "tr6.db")
+    db.ensure_schema(eng)
+    db.agregar_termino(eng, "cajero", "base", "2026-08-07T00:00:00")
+    db.registrar_corrida_termino(eng, "cajero", 5, "2026-08-07T10:00:00")
+    # 20 segundos después: dentro de un umbral de 30s (30/3600 horas)
+    assert db.termino_reciente(eng, "cajero", "2026-08-07T10:00:20",
+                               horas=30 / 3600) is True
+    # 40 segundos después: fuera del umbral de 30s, muy dentro de 24h
+    assert db.termino_reciente(eng, "cajero", "2026-08-07T10:00:40",
+                               horas=30 / 3600) is False
+
+
 def test_upsert_ofertas_ignora_duplicados(tmp_path):
     eng = db.engine(tmp_path / "o.db")
     db.ensure_schema(eng)  # ensure_schema ya crea la tabla `ofertas`
