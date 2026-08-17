@@ -568,3 +568,37 @@ explícitamente diferido — no son descuidos, son decisiones tomadas:
 - El mensaje "no pudimos empezar la búsqueda ahora mismo" puede
   aparecer también en el camino automático (perfil recién guardado sin
   ofertas), donde no hay un botón para reintentar. Se deja tal cual.
+
+Encontrado en la **segunda** revisión final de rama, tras el primer
+round de arreglos (rerun + rotación) — igual de deliberado, no un
+descuido:
+
+- **La rotación por `ultima_corrida` no cubre un cargo que nunca llega a
+  completar sus 4 fuentes** (se corta por presupuesto en cada clic, o
+  sus 4 fuentes fallan siempre) — su `ultima_corrida` queda `NULL` para
+  siempre, así que sigue ordenando primero y los demás cargos del
+  perfil no tienen turno. Medido como alcanzable con tiempos reales de
+  las fuentes (`fuente_trabajando`/`fuente_laborum` con el cupo lleno
+  rondan 110-130s cada una), sobre todo en las primeras búsquedas de un
+  perfil nuevo. El arreglo completo requiere una columna nueva
+  (`ultimo_intento`, escrita para todo cargo intentado, se complete o
+  no) — una migración de esquema real sobre Supabase de producción, que
+  se decidió no hacer todavía. La rama sigue siendo estrictamente mejor
+  que `main` de todas formas: el botón no existía antes.
+- Las pruebas nuevas de rotación verifican el orden dentro de una sola
+  llamada a `buscar()`, no el escenario real (varios clics = varias
+  llamadas separadas, con el tiempo real avanzando entre una y otra).
+  El controller sí verificó esto último con una simulación aislada
+  antes de aceptar el fix, pero no quedó como prueba permanente.
+- El `if ...: st.rerun()` del botón (el arreglo del Crítico 1 original)
+  no tiene ninguna prueba automatizada — `app.py` no tiene suite propia
+  por convención del proyecto, así que solo queda verificado a mano
+  (`AppTest`, no permanente).
+- Si una búsqueda forzada consume el presupuesto completo sin registrar
+  nada, el mensaje sigue siendo "no pudimos empezar la búsqueda" — que
+  es engañoso después de que la persona esperó varios minutos. Distinto
+  del punto ya documentado sobre el mismo mensaje en el camino
+  automático.
+- Ordenar por `ultima_corrida` hace una consulta por cargo en vez de una
+  sola con `IN (...)` — irrelevante frente a los 240s de una búsqueda,
+  mencionado solo por prolijidad.
