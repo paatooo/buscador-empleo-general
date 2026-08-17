@@ -162,6 +162,16 @@ def _buscar_en_vivo_con_progreso(cargos: list[str], forzar: bool = False) -> Non
             # instantes.
             st.info("Ya buscaste esto hace muy poco — espera un momento "
                     "antes de volver a intentar.")
+        else:
+            # Ni se buscó ni se reutilizó nada: los cargos quedaron en
+            # "en_cola" sin siquiera empezar (p. ej. el límite de
+            # búsquedas simultáneas de buscar_en_vivo.buscar estaba
+            # ocupado, o se acabó el presupuesto de tiempo antes de
+            # arrancar). No es "no encontramos nada" ni "buscaste hace
+            # poco" — es que no llegamos a intentarlo.
+            st.info("No pudimos empezar la búsqueda ahora mismo — "
+                    "probablemente haya otras búsquedas en curso. Intenta "
+                    "de nuevo en un momento.")
 
 
 ESTADOS_VIGENCIA = {"activa": "🟢 Activa", "por_vencer": "🟠 Por vencer",
